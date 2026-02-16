@@ -7,6 +7,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { parseFloorPlanSvg, buildStageGroup } from './stageModel.js';
 import { decodeSvgMetadata, encodeSvgMetadata } from '../shared/svgMetadata.js';
+import { withBasePath } from '../shared/basePath.js';
 
 const LATEST_PLAN_STORAGE_KEY = 'occultShooter.latestFloorPlanSvg';
 const LATEST_PLAYER_START_STORAGE_KEY = 'occultShooter.latestFloorPlanPlayerStart';
@@ -109,7 +110,7 @@ export function mountStageFromSvgRoute(containerElement) {
   controls.innerHTML = `
     <h1>Stage Preview</h1>
     <p>Import a floor-plan SVG to preview matching 3D walls, doors, and windows.</p>
-    <p><a href="/floor-plan">Back to floor planner</a> · <a href="/">Main menu</a></p>
+    <p><a href="${withBasePath('/floor-plan')}">Back to floor planner</a> · <a href="${withBasePath('/')}">Main menu</a></p>
   `;
 
   const fileLabel = document.createElement('label');
@@ -1026,7 +1027,7 @@ export function mountStageFromSvgRoute(containerElement) {
     }
     window.localStorage.setItem(LATEST_PLAN_STORAGE_KEY, latestLoadedSvg);
     persistStartPosition();
-    window.location.href = '/play?level=__latest_svg__';
+    window.location.href = withBasePath('/play?level=__latest_svg__');
   });
 
   exportGlbButton.addEventListener('click', async () => {
@@ -1056,7 +1057,7 @@ export function mountStageFromSvgRoute(containerElement) {
   });
 
   backToPlannerButton.addEventListener('click', () => {
-    window.location.href = '/floor-plan';
+    window.location.href = withBasePath('/floor-plan');
   });
 
   const searchParams = new URLSearchParams(window.location.search);

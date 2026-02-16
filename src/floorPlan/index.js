@@ -4,6 +4,7 @@
 
 import { generateFloorPlan, renderFloorPlanSvg } from './generator.js';
 import { decodeSvgMetadata, encodeSvgMetadata } from '../shared/svgMetadata.js';
+import { withBasePath } from '../shared/basePath.js';
 
 const MAX_SEED = 4294967295;
 const LATEST_PLAN_STORAGE_KEY = 'occultShooter.latestFloorPlanSvg';
@@ -323,7 +324,7 @@ export function mountFloorPlanRoute(containerElement) {
   header.innerHTML = `
     <h1>Stage Generator</h1>
     <p>Generate hallways with random L/U/S/T shapes and random doors.</p>
-    <p><a href="/">Main menu</a> · <a href="/stage-preview">Open stage preview</a></p>
+    <p><a href="${withBasePath('/')}">Main menu</a> · <a href="${withBasePath('/stage-preview')}">Open stage preview</a></p>
   `;
 
   const controls = document.createElement('section');
@@ -433,7 +434,7 @@ export function mountFloorPlanRoute(containerElement) {
   saveSvgButton.setAttribute('aria-label', 'Save SVG');
   saveSvgButton.title = 'Save SVG';
   const saveIconImage = document.createElement('img');
-  saveIconImage.src = '/icons8-save-50.png';
+  saveIconImage.src = withBasePath('/icons8-save-50.png');
   saveIconImage.alt = '';
   saveIconImage.setAttribute('aria-hidden', 'true');
   saveSvgButton.appendChild(saveIconImage);
@@ -1158,7 +1159,7 @@ export function mountFloorPlanRoute(containerElement) {
       setStatus('Generate a plan before opening stage preview.', 'error');
       return;
     }
-    window.location.href = '/stage-preview?source=latest';
+    window.location.href = withBasePath('/stage-preview?source=latest');
   });
 
   page.append(header, controls, npcPanel, previewPanel);

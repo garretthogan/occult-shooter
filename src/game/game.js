@@ -17,6 +17,7 @@ import { createPathfindingDebug } from './pathfindingDebug.js';
 import { createSceneControlPanel } from './sceneControlPanel.js';
 import { loadLightingConfigFromUrl, applyLightingConfig } from './lightingConfig.js';
 import { PHYSICS, PLAYER, NPC } from './config.js';
+import { withBasePath } from '../shared/basePath.js';
 
 const STEPS_PER_FRAME = PHYSICS.STEPS_PER_FRAME;
 const MAX_DELTA = PHYSICS.MAX_DELTA_PER_STEP;
@@ -43,7 +44,7 @@ const PLAYER_HIT_FLASH_DECAY = 2.8;
 const GAME_OVER_CAMERA_HEIGHT = 24;
 const GAME_OVER_CAMERA_DISTANCE = 8;
 
-const DEFAULT_WORLD_GLB_URL = '/collision-world.glb';
+const DEFAULT_WORLD_GLB_URL = withBasePath('/collision-world.glb');
 
 function resolvePlayerNpcCollision(player, npc, camera) {
   const playerCenter = player.collider.end.clone().add(player.collider.start).multiplyScalar(0.5);

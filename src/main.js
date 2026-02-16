@@ -8,6 +8,7 @@ import { createGame } from './game/index.js';
 import { mountFloorPlanRoute } from './floorPlan/index.js';
 import { mountStageFromSvgRoute } from './stageFromSvg/index.js';
 import { parseFloorPlanSvg } from './stageFromSvg/stageModel.js';
+import { stripBasePath, toBaseRelativePath, withBasePath } from './shared/basePath.js';
 
 const container = document.getElementById('app');
 if (container === null) {
@@ -15,7 +16,7 @@ if (container === null) {
 }
 document.body.classList.add('tui');
 
-const FALLBACK_LEVEL_URL = '/levels/level-1.glb';
+const FALLBACK_LEVEL_URL = withBasePath('/levels/level-1.glb');
 const LATEST_PLAN_STORAGE_KEY = 'occultShooter.latestFloorPlanSvg';
 const LATEST_PLAYER_START_STORAGE_KEY = 'occultShooter.latestFloorPlanPlayerStart';
 const LATEST_SVG_LEVEL_TOKEN = '__latest_svg__';
@@ -24,7 +25,25 @@ const LEVEL_FILE_PATTERN = /(^|\/)level-[^/]+\.glb$/i;
 function normalizeLevelList(levelEntries) {
   return levelEntries
     .filter((entry) => typeof entry === 'string' && entry.trim().length > 0)
-    .map((entry) => (entry.startsWith('/') ? entry : `/levels/${entry}`))
+    .map((entry) => {
+      const rawEntry = entry.trim();
+      if (/^https?:\/\//i.test(rawEntry)) {
+        return rawEntry;
+      }
+      const baseRelative = toBaseRelativePath(rawEntry);
+      const bareLevelFile = /^\/[^/]+\.glb$/i.test(baseRelative);
+      if (bareLevelFile) {
+        return withBasePath(`/levels/${baseRelative.slice(1)}`);
+      }
+      if (baseRelative.startsWith('/levels/')) {
+        return withBasePath(baseRelative);
+      }
+      if (baseRelative.startsWith('/')) {
+        return withBasePath(baseRelative);
+      }
+      const levelPath = `/levels/${baseRelative.replace(/^\.?\//, '')}`;
+      return withBasePath(levelPath);
+    })
     .toSorted((a, b) => a.localeCompare(b));
 }
 
@@ -48,7 +67,7 @@ async function resolvePlayableLevelUrls() {
 
 async function readLevelsFromManifest() {
   try {
-    const response = await fetch('/levels/manifest.json', { cache: 'no-cache' });
+    const response = await fetch(withBasePath('/levels/manifest.json'), { cache: 'no-cache' });
     if (!response.ok) {
       throw new Error(`manifest request failed: ${response.status}`);
     }
@@ -65,7 +84,7 @@ async function readLevelsFromManifest() {
 
 async function readLevelsFromDirectoryListing() {
   try {
-    const response = await fetch('/levels/', { cache: 'no-cache' });
+    const response = await fetch(withBasePath('/levels/'), { cache: 'no-cache' });
     if (!response.ok) {
       return [];
     }
@@ -125,7 +144,7 @@ async function mountGameRoute(worldUrl, svgFloorPlanText, playerStart, npcStarts
         window.history.back();
         return;
       }
-      window.location.href = '/stage-preview';
+      window.location.href = withBasePath('/stage-preview');
     };
 
     const handleEscapeToStageOverview = (event) => {
@@ -195,7 +214,7 @@ function mountMainMenuRoute() {
   nav.className = 'menu-links';
   nav.setAttribute('aria-label', 'Main menu routes');
   nav.innerHTML = `
-    <a href="/floor-plan">stage generator</a>
+    <a href="${withBasePath('/floor-plan')}">stage generator</a>
   `;
 
   const status = document.createElement('p');
@@ -209,7 +228,7 @@ function mountMainMenuRoute() {
     levels.forEach((levelUrl) => {
       const option = document.createElement('option');
       option.value = levelUrl;
-      option.textContent = levelUrl.replace('/levels/', '');
+      option.textContent = levelUrl.replace(/^.*\/levels\//, '');
       levelPicker.appendChild(option);
     });
     selectedLevelUrl = levels[0] ?? FALLBACK_LEVEL_URL;
@@ -225,14 +244,14 @@ function mountMainMenuRoute() {
 
   startButton.addEventListener('click', () => {
     const encoded = encodeURIComponent(selectedLevelUrl);
-    window.location.href = `/play?level=${encoded}`;
+    window.location.href = withBasePath(`/play?level=${encoded}`);
   });
 
   menu.append(levelPickerLabel, startButton, status, nav);
   container.append(menu);
 }
 
-const pathname = window.location.pathname;
+const pathname = stripBasePath(window.location.pathname);
 if (pathname.startsWith('/play')) {
   const params = new URLSearchParams(window.location.search);
   const levelParam = params.get('level');

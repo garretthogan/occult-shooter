@@ -2,7 +2,9 @@
  * Lighting config: serialize to/from JSON, load from URL, download as file.
  */
 
-const LIGHTING_CONFIG_URL = '/lighting.json';
+import { withBasePath } from '../shared/basePath.js';
+
+const LIGHTING_CONFIG_URL = withBasePath('/lighting.json');
 
 /**
  * @typedef {Object} LightingConfig
