@@ -1,0 +1,26 @@
+{
+  "fillLight": {
+    "skyColor": 9283534,
+    "groundColor": 26317,
+    "intensity": 0.6,
+    "position": {
+      "x": 2,
+      "y": 1,
+      "z": 1
+    }
+  },
+  "directionalLight": {
+    "color": 16777215,
+    "intensity": 3.5,
+    "position": {
+      "x": -5,
+      "y": 25,
+      "z": -1
+    },
+    "castShadow": true,
+    "shadow": {
+      "radius": 4,
+      "mapSize": 1024
+    }
+  }
+}
