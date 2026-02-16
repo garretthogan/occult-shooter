@@ -63,25 +63,5 @@ export function createScene() {
   scene.background = new THREE.Color(0x050914);
   scene.fog = new THREE.Fog(0x050914, 16, 92);
   scene.add(createNightSkyDome());
-
-  const fillLight = new THREE.HemisphereLight(0x415a8a, 0x091220, 1.1);
-  fillLight.position.set(2, 1, 1);
-  scene.add(fillLight);
-
-  const directionalLight = new THREE.DirectionalLight(0xb7c9ff, 1.35);
-  directionalLight.position.set(-5, 25, -1);
-  directionalLight.castShadow = true;
-  directionalLight.shadow.camera.near = 0.01;
-  directionalLight.shadow.camera.far = 500;
-  directionalLight.shadow.camera.right = 30;
-  directionalLight.shadow.camera.left = -30;
-  directionalLight.shadow.camera.top = 30;
-  directionalLight.shadow.camera.bottom = -30;
-  directionalLight.shadow.mapSize.width = 1024;
-  directionalLight.shadow.mapSize.height = 1024;
-  directionalLight.shadow.radius = 4;
-  directionalLight.shadow.bias = -0.00006;
-  scene.add(directionalLight);
-
-  return { scene, fillLight, directionalLight };
+  return { scene };
 }

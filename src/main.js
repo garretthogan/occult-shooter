@@ -121,7 +121,22 @@ function readPlayerStartFromStorage() {
   }
 }
 
-async function mountGameRoute(worldUrl, svgFloorPlanText, playerStart, npcStarts = [], isStageTestWorld = false) {
+async function waitForUiPaint() {
+  await new Promise((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(resolve);
+    });
+  });
+}
+
+async function mountGameRoute(
+  worldUrl,
+  svgFloorPlanText,
+  playerStart,
+  npcStarts = [],
+  lightSpawns = [],
+  isStageTestWorld = false
+) {
   container.className = 'game-root';
   container.replaceChildren();
 
@@ -165,12 +180,14 @@ async function mountGameRoute(worldUrl, svgFloorPlanText, playerStart, npcStarts
     document.addEventListener('keydown', handleEscapeToStageOverview);
     document.addEventListener('pointerlockchange', handlePointerLockChange);
   }
+  await waitForUiPaint();
   createGame(container, {
     worldUrl,
     svgFloorPlanText,
     spawnNpc,
     playerStart,
     npcStarts,
+    lightSpawns,
     showSceneGui: false,
     escapePausesGame: !isStageTestWorld,
   })
@@ -259,6 +276,7 @@ if (pathname.startsWith('/play')) {
     const svgFloorPlanText = window.localStorage.getItem(LATEST_PLAN_STORAGE_KEY) ?? '';
     let playerStart = readPlayerStartFromStorage();
     let npcStarts = [];
+    let lightSpawns = [];
     if (svgFloorPlanText.length > 0) {
       try {
         const parsed = parseFloorPlanSvg(svgFloorPlanText);
@@ -266,14 +284,16 @@ if (pathname.startsWith('/play')) {
           playerStart = parsed.playerStart;
         }
         npcStarts = Array.isArray(parsed.npcSpawns) ? parsed.npcSpawns : [];
+        lightSpawns = Array.isArray(parsed.lightSpawns) ? parsed.lightSpawns : [];
       } catch {
         npcStarts = [];
+        lightSpawns = [];
       }
     }
-    await mountGameRoute(FALLBACK_LEVEL_URL, svgFloorPlanText, playerStart, npcStarts, true);
+    await mountGameRoute(FALLBACK_LEVEL_URL, svgFloorPlanText, playerStart, npcStarts, lightSpawns, true);
   } else {
     const worldUrl = levelParam ?? await resolveFirstLevelUrl();
-    await mountGameRoute(worldUrl, '', null, [], false);
+    await mountGameRoute(worldUrl, '', null, [], [], false);
   }
 } else if (pathname.startsWith('/floor-plan')) {
   mountFloorPlanRoute(container);

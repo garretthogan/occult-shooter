@@ -12,6 +12,10 @@ const FLOOR_PLAN_SETTINGS_STORAGE_KEY = 'occultShooter.floorPlanSettings';
 const LATEST_PLAYER_START_STORAGE_KEY = 'occultShooter.latestFloorPlanPlayerStart';
 const MIN_GENERATE_SPINNER_MS = 320;
 const PANEL_COLLAPSE_STORAGE_KEY = 'occultShooter.floorPlanPanelCollapseState';
+const LIGHT_INTENSITY_MIN = 0;
+const LIGHT_INTENSITY_MAX = 24;
+const LIGHT_RADIUS_MIN = 1;
+const LIGHT_RADIUS_MAX = 120;
 
 function createNumberField(labelText, inputId, defaultValue, min, max) {
   const wrapper = document.createElement('label');
@@ -30,6 +34,33 @@ function createNumberField(labelText, inputId, defaultValue, min, max) {
 
   wrapper.appendChild(input);
   return { wrapper, input };
+}
+
+function createDecimalRangeField(labelText, inputId, defaultValue, min, max, step = 0.1) {
+  const wrapper = document.createElement('label');
+  wrapper.className = 'plan-control';
+  wrapper.setAttribute('for', inputId);
+  const labelRow = document.createElement('span');
+  labelRow.textContent = labelText;
+  const valueReadout = document.createElement('strong');
+  valueReadout.textContent = Number(defaultValue).toFixed(1);
+  labelRow.append(' ', valueReadout);
+
+  const input = document.createElement('input');
+  input.id = inputId;
+  input.type = 'range';
+  input.value = String(defaultValue);
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  const syncReadout = () => {
+    valueReadout.textContent = (Number(input.value) || Number(defaultValue)).toFixed(1);
+  };
+  input.addEventListener('input', syncReadout);
+  syncReadout();
+
+  wrapper.append(labelRow, input);
+  return { wrapper, input, syncReadout };
 }
 
 function createRangeField(labelText, inputId, defaultValue, min, max) {
@@ -146,6 +177,7 @@ function loadSavedSettings() {
       doorCount: Number(parsed.doorCount),
       roomShapeStyle: Number(parsed.roomShapeStyle),
       maxWindowCount: Number(parsed.maxWindowCount),
+      maxLightCount: Number(parsed.maxLightCount),
       statsText: typeof parsed.statsText === 'string' ? parsed.statsText : '',
     };
   } catch {
@@ -225,6 +257,25 @@ function updateNpcStartElementGeometry(element, npcSpawn, padding) {
     head.setAttribute('cx', String(cx));
     head.setAttribute('cy', String(cy - 0.52));
     head.setAttribute('r', '0.18');
+  }
+}
+
+function updateLightStartElementGeometry(element, lightSpawn, padding) {
+  const cx = lightSpawn.x + padding;
+  const cy = lightSpawn.y + padding;
+  element.setAttribute('data-plan-x', String(lightSpawn.x));
+  element.setAttribute('data-plan-y', String(lightSpawn.y));
+  const core = element.querySelector('.light-start-core');
+  const ring = element.querySelector('.light-start-ring');
+  if (core != null) {
+    core.setAttribute('cx', String(cx));
+    core.setAttribute('cy', String(cy));
+    core.setAttribute('r', '0.2');
+  }
+  if (ring != null) {
+    ring.setAttribute('cx', String(cx));
+    ring.setAttribute('cy', String(cy));
+    ring.setAttribute('r', '0.38');
   }
 }
 
@@ -370,6 +421,13 @@ export function mountFloorPlanRoute(containerElement) {
     0,
     40
   );
+  const maxLightCountField = createNumberField(
+    'Max lights',
+    'hallway-light-count',
+    Number.isFinite(savedSettings?.maxLightCount) ? savedSettings.maxLightCount : 10,
+    0,
+    80
+  );
   const roomShapeStyleField = createRangeField(
     'Room shape style',
     'room-shape-style',
@@ -400,6 +458,7 @@ export function mountFloorPlanRoute(containerElement) {
     hallwayCountField.wrapper,
     doorCountField.wrapper,
     maxWindowCountField.wrapper,
+    maxLightCountField.wrapper,
     roomShapeStyleField.wrapper,
     regenerateButton,
     openStageButton
@@ -443,7 +502,7 @@ export function mountFloorPlanRoute(containerElement) {
   stats.className = 'plan-stats';
   const npcPanel = document.createElement('section');
   npcPanel.className = 'plan-npc-panel';
-  npcPanel.setAttribute('aria-label', 'NPC list and plan info');
+  npcPanel.setAttribute('aria-label', 'NPC and light list with plan info');
   const npcPanelTitle = document.createElement('h2');
   npcPanelTitle.className = 'plan-npc-title';
   npcPanelTitle.textContent = 'NPC spawns';
@@ -457,10 +516,60 @@ export function mountFloorPlanRoute(containerElement) {
   deleteAllNpcButton.type = 'button';
   deleteAllNpcButton.className = 'plan-download plan-delete-npc';
   deleteAllNpcButton.textContent = 'Delete all NPCs';
+  const lightPanelTitle = document.createElement('h2');
+  lightPanelTitle.className = 'plan-npc-title';
+  lightPanelTitle.textContent = 'Lights';
+  const lightList = document.createElement('ul');
+  lightList.className = 'plan-npc-list';
+  const addLightButton = document.createElement('button');
+  addLightButton.type = 'button';
+  addLightButton.className = 'plan-download plan-delete-npc';
+  addLightButton.textContent = 'Add light';
+  const deleteLightButton = document.createElement('button');
+  deleteLightButton.type = 'button';
+  deleteLightButton.className = 'plan-download plan-delete-npc';
+  deleteLightButton.textContent = 'Delete selected light';
+  const deleteAllLightsButton = document.createElement('button');
+  deleteAllLightsButton.type = 'button';
+  deleteAllLightsButton.className = 'plan-download plan-delete-npc';
+  deleteAllLightsButton.textContent = 'Delete all lights';
+  const lightIntensityField = createDecimalRangeField(
+    'Light intensity',
+    'selected-light-intensity',
+    1.2,
+    LIGHT_INTENSITY_MIN,
+    LIGHT_INTENSITY_MAX,
+    0.1
+  );
+  const lightRadiusField = createDecimalRangeField(
+    'Light radius',
+    'selected-light-radius',
+    7.5,
+    LIGHT_RADIUS_MIN,
+    LIGHT_RADIUS_MAX,
+    0.1
+  );
+  lightIntensityField.input.disabled = true;
+  lightRadiusField.input.disabled = true;
   const panelInfo = document.createElement('div');
   panelInfo.className = 'plan-panel-info';
   panelInfo.append(status, stats);
-  npcPanel.append(saveSvgButton, npcPanelTitle, npcList, addNpcButton, deleteNpcButton, deleteAllNpcButton, panelInfo);
+  npcPanel.append(
+    saveSvgButton,
+    npcPanelTitle,
+    npcList,
+    addNpcButton,
+    deleteNpcButton,
+    deleteAllNpcButton,
+    lightPanelTitle,
+    lightList,
+    addLightButton,
+    deleteLightButton,
+    deleteAllLightsButton,
+    lightIntensityField.wrapper,
+    lightRadiusField.wrapper,
+    panelInfo
+  );
   const collapseState = readPanelCollapseState();
   attachPanelTab(controls, {
     edge: 'left',
@@ -488,9 +597,12 @@ export function mountFloorPlanRoute(containerElement) {
   let latestSvg = '';
   let currentPlayerStart = null;
   let selectedNpcId = null;
+  let selectedLightId = null;
   let cleanupNpcDeleteListener = null;
   let selectNpcById = null;
   let deleteSelectedNpc = null;
+  let selectLightById = null;
+  let deleteSelectedLight = null;
 
   function isTypingTarget(target) {
     if (!(target instanceof HTMLElement)) return false;
@@ -529,14 +641,47 @@ export function mountFloorPlanRoute(containerElement) {
     });
   }
 
+  function renderLightListFromMetadata(metadata) {
+    lightList.replaceChildren();
+    const spawns = Array.isArray(metadata?.lightSpawns) ? metadata.lightSpawns : [];
+    if (spawns.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'plan-npc-empty';
+      empty.textContent = 'No stage lights.';
+      lightList.appendChild(empty);
+      return;
+    }
+    spawns.forEach((spawn, index) => {
+      const item = document.createElement('li');
+      item.className = 'plan-npc-item';
+      const id = spawn.id ?? `light-${index + 1}`;
+      if (id === selectedLightId) {
+        item.classList.add('is-selected');
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'plan-npc-select';
+      button.textContent = `${id} (${Number(spawn.x).toFixed(1)}, ${Number(spawn.y).toFixed(1)})`;
+      button.addEventListener('click', () => {
+        if (selectLightById != null) {
+          selectLightById(id);
+        }
+      });
+      item.appendChild(button);
+      lightList.appendChild(item);
+    });
+  }
+
   function renderNpcListFromCurrentSvg() {
     const svg = previewContent.querySelector('svg');
     if (svg == null) {
       renderNpcListFromMetadata({ npcSpawns: [] });
+      renderLightListFromMetadata({ lightSpawns: [] });
       return;
     }
     const metadata = decodeSvgMetadata(svg);
     renderNpcListFromMetadata(metadata ?? { npcSpawns: [] });
+    renderLightListFromMetadata(metadata ?? { lightSpawns: [] });
   }
 
   function bindFurnitureDragging() {
@@ -565,6 +710,9 @@ export function mountFloorPlanRoute(containerElement) {
     if (!Array.isArray(metadata.npcSpawns)) {
       metadata.npcSpawns = [];
     }
+    if (!Array.isArray(metadata.lightSpawns)) {
+      metadata.lightSpawns = [];
+    }
     const clampPlanX = (x) => Math.max(0, Math.min(planWidth, x));
     const clampPlanY = (y) => Math.max(0, Math.min(planHeight, y));
     const furnitureById = new Map(
@@ -581,6 +729,23 @@ export function mountFloorPlanRoute(containerElement) {
       ])
     );
     metadata.npcSpawns = [...npcById.values()];
+    const lightById = new Map();
+    metadata.lightSpawns.forEach((item, index) => {
+      const x = Number(item.x);
+      const y = Number(item.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      const id = item.id ?? `light-${index + 1}`;
+      lightById.set(id, {
+        id,
+        x,
+        y,
+        height: Number(item.height) || 2.35,
+        intensity: Number(item.intensity) || 1.2,
+        range: Number(item.range) || 7.5,
+        color: typeof item.color === 'string' ? item.color : '#ffe8b8',
+      });
+    });
+    metadata.lightSpawns = [...lightById.values()];
     const svgPoint = svg.createSVGPoint();
     let dragState = null;
 
@@ -630,6 +795,22 @@ export function mountFloorPlanRoute(containerElement) {
       svg.appendChild(npcElement);
       updateNpcStartElementGeometry(npcElement, npcSpawn, padding);
     }
+    svg.querySelectorAll('.light-start-marker').forEach((element) => {
+      element.remove();
+    });
+    for (const lightSpawn of metadata.lightSpawns) {
+      const namespace = 'http://www.w3.org/2000/svg';
+      const lightElement = document.createElementNS(namespace, 'g');
+      lightElement.setAttribute('class', 'light-start-marker');
+      lightElement.setAttribute('data-id', lightSpawn.id);
+      const core = document.createElementNS(namespace, 'circle');
+      core.setAttribute('class', 'light-start-core');
+      const ring = document.createElementNS(namespace, 'circle');
+      ring.setAttribute('class', 'light-start-ring');
+      lightElement.append(core, ring);
+      svg.appendChild(lightElement);
+      updateLightStartElementGeometry(lightElement, lightSpawn, padding);
+    }
 
     const setSelectedNpcMarker = (nextId) => {
       selectedNpcId = nextId;
@@ -646,15 +827,75 @@ export function mountFloorPlanRoute(containerElement) {
       }
       renderNpcListFromMetadata(metadata);
     };
+    const setSelectedLightMarker = (nextId) => {
+      selectedLightId = nextId;
+      svg.querySelectorAll('.light-start-marker').forEach((element) => {
+        const id = element.getAttribute('data-id');
+        if (id != null && id === nextId) {
+          element.classList.add('is-selected');
+        } else {
+          element.classList.remove('is-selected');
+        }
+      });
+      if (nextId != null) {
+        setStatus('Light selected. Press Delete or Backspace to remove.', 'info');
+      }
+      renderLightListFromMetadata(metadata);
+      const selected = nextId == null ? null : lightById.get(nextId) ?? null;
+      lightIntensityField.input.disabled = selected == null;
+      lightRadiusField.input.disabled = selected == null;
+      lightIntensityField.input.value = selected == null ? '1.2' : String((Number(selected.intensity) || 1.2).toFixed(1));
+      lightRadiusField.input.value = selected == null ? '7.5' : String((Number(selected.range) || 7.5).toFixed(1));
+      lightIntensityField.syncReadout();
+      lightRadiusField.syncReadout();
+    };
     if (selectedNpcId != null && npcById.has(selectedNpcId)) {
       setSelectedNpcMarker(selectedNpcId);
     } else {
       setSelectedNpcMarker(null);
     }
+    if (selectedLightId != null && lightById.has(selectedLightId)) {
+      setSelectedLightMarker(selectedLightId);
+    } else {
+      setSelectedLightMarker(null);
+    }
     selectNpcById = (id) => {
       if (!npcById.has(id)) return;
       setSelectedNpcMarker(id);
     };
+    selectLightById = (id) => {
+      if (!lightById.has(id)) return;
+      setSelectedLightMarker(id);
+    };
+
+    const updateSelectedLightSettings = () => {
+      if (selectedLightId == null) return;
+      const selected = lightById.get(selectedLightId);
+      if (selected == null) return;
+      const intensity = Math.max(
+        LIGHT_INTENSITY_MIN,
+        Math.min(LIGHT_INTENSITY_MAX, Number(lightIntensityField.input.value) || 1.2)
+      );
+      const range = Math.max(
+        LIGHT_RADIUS_MIN,
+        Math.min(LIGHT_RADIUS_MAX, Number(lightRadiusField.input.value) || 7.5)
+      );
+      selected.intensity = intensity;
+      selected.range = range;
+      const metadataIndex = metadata.lightSpawns.findIndex((item) => item.id === selectedLightId);
+      if (metadataIndex >= 0) {
+        metadata.lightSpawns[metadataIndex].intensity = intensity;
+        metadata.lightSpawns[metadataIndex].range = range;
+      }
+      lightIntensityField.input.value = intensity.toFixed(1);
+      lightRadiusField.input.value = range.toFixed(1);
+      lightIntensityField.syncReadout();
+      lightRadiusField.syncReadout();
+      persistSvgAndMetadata();
+      setStatus('Light settings updated.', 'success');
+    };
+    lightIntensityField.input.addEventListener('input', updateSelectedLightSettings);
+    lightRadiusField.input.addEventListener('input', updateSelectedLightSettings);
 
     const toSvgCoordinates = (event) => {
       const ctm = svg.getScreenCTM();
@@ -716,14 +957,20 @@ export function mountFloorPlanRoute(containerElement) {
     svg.addEventListener('pointerdown', (event) => {
       const marker = event.target.closest('.player-start-marker');
       const npcMarker = event.target.closest('.npc-start-marker');
+      const lightMarker = event.target.closest('.light-start-marker');
       if (marker != null) {
         setSelectedNpcMarker(null);
+        setSelectedLightMarker(null);
         return;
       }
       if (npcMarker != null) {
         return;
       }
+      if (lightMarker != null) {
+        return;
+      }
       setSelectedNpcMarker(null);
+      setSelectedLightMarker(null);
       const element = event.target.closest('.furniture');
       if (element != null) {
         const id = element.getAttribute('data-id');
@@ -809,6 +1056,19 @@ export function mountFloorPlanRoute(containerElement) {
         updateNpcStartElementGeometry(dragState.element, spawn, padding);
         return;
       }
+      if (dragState.kind === 'lightStart') {
+        const light = lightById.get(dragState.id);
+        if (light == null) return;
+        light.x = clampPlanX(point.x - dragState.pointerOffsetX - padding);
+        light.y = clampPlanY(point.y - dragState.pointerOffsetY - padding);
+        const metadataIndex = metadata.lightSpawns.findIndex((item) => item.id === dragState.id);
+        if (metadataIndex >= 0) {
+          metadata.lightSpawns[metadataIndex].x = light.x;
+          metadata.lightSpawns[metadataIndex].y = light.y;
+        }
+        updateLightStartElementGeometry(dragState.element, light, padding);
+        return;
+      }
 
       if (dragState.kind === 'pan') {
         const delta = toViewBoxDelta(
@@ -883,6 +1143,26 @@ export function mountFloorPlanRoute(containerElement) {
         event.preventDefault();
       });
     });
+    svg.querySelectorAll('.light-start-marker').forEach((element) => {
+      element.addEventListener('pointerdown', (event) => {
+        const point = toSvgCoordinates(event);
+        if (point == null) return;
+        const id = element.getAttribute('data-id');
+        if (id == null) return;
+        const spawn = lightById.get(id);
+        if (spawn == null) return;
+        setSelectedLightMarker(id);
+        dragState = {
+          kind: 'lightStart',
+          id,
+          element,
+          pointerOffsetX: point.x - (spawn.x + padding),
+          pointerOffsetY: point.y - (spawn.y + padding),
+        };
+        element.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      });
+    });
 
     if (cleanupNpcDeleteListener != null) {
       cleanupNpcDeleteListener();
@@ -899,13 +1179,29 @@ export function mountFloorPlanRoute(containerElement) {
       bindFurnitureDragging();
       setStatus('NPC placeholder deleted.', 'success');
     };
+    deleteSelectedLight = () => {
+      if (selectedLightId == null) return;
+      const nextSpawns = metadata.lightSpawns.filter((item) => item.id !== selectedLightId);
+      if (nextSpawns.length === metadata.lightSpawns.length) return;
+      metadata.lightSpawns = nextSpawns;
+      selectedLightId = null;
+      persistSvgAndMetadata();
+      previewContent.innerHTML = latestSvg;
+      bindFurnitureDragging();
+      setStatus('Light deleted.', 'success');
+    };
     const handleNpcDelete = (event) => {
       const isDeleteKey = event.key === 'Delete' || event.key === 'Backspace';
       if (!isDeleteKey) return;
       if (isTypingTarget(event.target)) return;
-      const before = selectedNpcId;
-      deleteSelectedNpc();
-      if (before != null) {
+      const hadNpcSelection = selectedNpcId != null;
+      const hadLightSelection = selectedLightId != null;
+      if (hadNpcSelection) {
+        deleteSelectedNpc();
+      } else if (hadLightSelection) {
+        deleteSelectedLight();
+      }
+      if (hadNpcSelection || hadLightSelection) {
         event.preventDefault();
       }
     };
@@ -955,6 +1251,7 @@ export function mountFloorPlanRoute(containerElement) {
     const hallwayCount = readPositiveInt(hallwayCountField.input, 1);
     const requestedRoomCount = readPositiveInt(doorCountField.input, 6);
     const requestedWindowCount = readPositiveInt(maxWindowCountField.input, 8);
+    const requestedLightCount = readBoundedInt(maxLightCountField.input, 10, 0, 80);
     const roomShapeStyle = readBoundedInt(roomShapeStyleField.input, 45, 0, 100);
 
     try {
@@ -965,6 +1262,7 @@ export function mountFloorPlanRoute(containerElement) {
         hallwayCount,
         doorCount: requestedRoomCount,
         maxWindowCount: requestedWindowCount,
+        maxLightCount: requestedLightCount,
         roomShapeStyle,
         strictDoorCount: false,
         requireExteriorExits: false,
@@ -991,7 +1289,11 @@ export function mountFloorPlanRoute(containerElement) {
 
       const playerStart = resolvePlayerStartWithinPlan(currentPlayerStart, width, height);
       currentPlayerStart = playerStart;
-      const svgMarkup = renderFloorPlanSvg(plan, { playerStart, npcSpawns });
+      const svgMarkup = renderFloorPlanSvg(plan, {
+        playerStart,
+        npcSpawns,
+        lightSpawns: plan.lightSpawns ?? [],
+      });
       const svgWrapper = document.createElement('div');
       svgWrapper.innerHTML = svgMarkup;
       const svgRoot = svgWrapper.querySelector('svg');
@@ -1009,7 +1311,8 @@ export function mountFloorPlanRoute(containerElement) {
       const statsText =
         `Hallways: ${plan.meta.hallwayCount} · Walls: ${plan.walls.length} · ` +
         `Rooms: ${plan.meta.placedDoorCount}/${requestedRoomCount} · ` +
-        `Windows: ${plan.meta.windowCount}/${requestedWindowCount}`;
+        `Windows: ${plan.meta.windowCount}/${requestedWindowCount} · ` +
+        `Lights: ${plan.meta.lightCount}/${requestedLightCount}`;
       stats.textContent = statsText;
       window.localStorage.setItem(
         FLOOR_PLAN_SETTINGS_STORAGE_KEY,
@@ -1020,6 +1323,7 @@ export function mountFloorPlanRoute(containerElement) {
           hallwayCount,
           doorCount: requestedRoomCount,
           maxWindowCount: requestedWindowCount,
+          maxLightCount: requestedLightCount,
           roomShapeStyle,
           statsText,
         })
@@ -1073,6 +1377,17 @@ export function mountFloorPlanRoute(containerElement) {
     }
     deleteSelectedNpc();
   });
+  deleteLightButton.addEventListener('click', () => {
+    if (deleteSelectedLight == null) {
+      setStatus('Generate a hallway first.', 'error');
+      return;
+    }
+    if (selectedLightId == null) {
+      setStatus('Select a light from the list first.', 'error');
+      return;
+    }
+    deleteSelectedLight();
+  });
   deleteAllNpcButton.addEventListener('click', () => {
     const svg = previewContent.querySelector('svg');
     if (svg == null) {
@@ -1099,6 +1414,33 @@ export function mountFloorPlanRoute(containerElement) {
     previewContent.innerHTML = latestSvg;
     bindFurnitureDragging();
     setStatus('All NPC placeholders deleted.', 'success');
+  });
+  deleteAllLightsButton.addEventListener('click', () => {
+    const svg = previewContent.querySelector('svg');
+    if (svg == null) {
+      setStatus('Generate a hallway first.', 'error');
+      return;
+    }
+    const metadata = decodeSvgMetadata(svg);
+    if (metadata == null || !Array.isArray(metadata.lightSpawns)) {
+      setStatus('No lights to delete.', 'info');
+      return;
+    }
+    if (metadata.lightSpawns.length === 0) {
+      setStatus('No lights to delete.', 'info');
+      return;
+    }
+    metadata.lightSpawns = [];
+    const metadataNode = svg.querySelector('#occult-floorplan-meta');
+    if (metadataNode != null) {
+      metadataNode.textContent = encodeSvgMetadata(metadata);
+    }
+    selectedLightId = null;
+    latestSvg = svg.outerHTML;
+    window.localStorage.setItem(LATEST_PLAN_STORAGE_KEY, latestSvg);
+    previewContent.innerHTML = latestSvg;
+    bindFurnitureDragging();
+    setStatus('All lights deleted.', 'success');
   });
   addNpcButton.addEventListener('click', () => {
     const svg = previewContent.querySelector('svg');
@@ -1135,6 +1477,46 @@ export function mountFloorPlanRoute(containerElement) {
     previewContent.innerHTML = latestSvg;
     bindFurnitureDragging();
     setStatus('NPC placeholder added.', 'success');
+  });
+  addLightButton.addEventListener('click', () => {
+    const svg = previewContent.querySelector('svg');
+    if (svg == null) {
+      setStatus('Generate a hallway before adding lights.', 'error');
+      return;
+    }
+    const metadata = decodeSvgMetadata(svg);
+    if (metadata == null) {
+      setStatus('Could not read floor plan metadata.', 'error');
+      return;
+    }
+    if (!Array.isArray(metadata.lightSpawns)) {
+      metadata.lightSpawns = [];
+    }
+    const viewBox = parseViewBox(svg);
+    const padding = Number(metadata.padding) || 0;
+    const planWidth = viewBox == null ? 0 : Math.max(0, viewBox.width - padding * 2);
+    const planHeight = viewBox == null ? 0 : Math.max(0, viewBox.height - padding * 2);
+    const id = `light-${metadata.lightSpawns.length + 1}`;
+    const seedOffset = metadata.lightSpawns.length * 0.5;
+    const spawn = {
+      id,
+      x: Math.max(0, Math.min(planWidth, planWidth * 0.5 + seedOffset)),
+      y: Math.max(0, Math.min(planHeight, planHeight * 0.5 + seedOffset)),
+      height: 2.35,
+      intensity: 1.2,
+      range: 7.5,
+      color: '#ffe8b8',
+    };
+    metadata.lightSpawns.push(spawn);
+    const metadataNode = svg.querySelector('#occult-floorplan-meta');
+    if (metadataNode != null) {
+      metadataNode.textContent = encodeSvgMetadata(metadata);
+    }
+    latestSvg = svg.outerHTML;
+    window.localStorage.setItem(LATEST_PLAN_STORAGE_KEY, latestSvg);
+    previewContent.innerHTML = latestSvg;
+    bindFurnitureDragging();
+    setStatus('Light added.', 'success');
   });
   saveSvgButton.addEventListener('click', () => {
     if (latestSvg.length === 0) {

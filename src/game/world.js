@@ -67,7 +67,8 @@ export function createProceduralWorld() {
  *  group: THREE.Group,
  *  octree: Octree,
  *  playerStart: { x: number, z: number } | null,
- *  npcStarts: { x: number, z: number }[]
+ *  npcStarts: { x: number, z: number }[],
+ *  lightSpawns: { x: number, z: number, height: number, intensity: number, range: number, color: string }[]
  * }>}
  */
 export async function loadGlbWorld(url) {
@@ -93,6 +94,7 @@ export async function loadGlbWorld(url) {
 
   let playerStart = null;
   const npcStarts = [];
+  const lightSpawns = [];
   const playerStartNode = group.getObjectByName('player-start');
   if (playerStartNode != null) {
     const worldPos = new THREE.Vector3();
@@ -112,7 +114,23 @@ export async function loadGlbWorld(url) {
     }
   });
 
-  return { group, octree, playerStart, npcStarts };
+  group.traverse((node) => {
+    if (typeof node?.name !== 'string') return;
+    if (!node.name.startsWith('stage-light-')) return;
+    const worldPos = new THREE.Vector3();
+    node.getWorldPosition(worldPos);
+    if (!Number.isFinite(worldPos.x) || !Number.isFinite(worldPos.z)) return;
+    const intensity = Number(node.userData?.intensity) || 1.2;
+    const range = Number(node.userData?.range) || 7.5;
+    const height = Number(node.userData?.height) || 2.35;
+    const color =
+      typeof node.userData?.color === 'string' && node.userData.color.length > 0
+        ? node.userData.color
+        : '#ffe8b8';
+    lightSpawns.push({ x: worldPos.x, z: worldPos.z, height, intensity, range, color });
+  });
+
+  return { group, octree, playerStart, npcStarts, lightSpawns };
 }
 
 /**

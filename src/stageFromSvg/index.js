@@ -18,14 +18,21 @@ const FURNITURE_CLEARANCE = 0.25;
 const PLAYER_START_COLOR = 0xff69b4;
 const NPC_PREVIEW_COLOR = 0x7dc5ff;
 const NPC_PREVIEW_SELECTED_COLOR = 0xffd76e;
+const STAGE_LIGHT_PREVIEW_COLOR = 0xffe8b8;
+const STAGE_LIGHT_PREVIEW_SELECTED_COLOR = 0xffc66b;
 const PREVIEW_FAST_MODE_COMPLEXITY_THRESHOLD = 700;
 const PANEL_COLLAPSE_STORAGE_KEY = 'occultShooter.stagePreviewPanelCollapseState';
+const LIGHT_INTENSITY_MIN = 0;
+const LIGHT_INTENSITY_MAX = 24;
+const LIGHT_RADIUS_MIN = 1;
+const LIGHT_RADIUS_MAX = 120;
 
 function mountRenderer(containerElement) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setSize(containerElement.clientWidth, containerElement.clientHeight);
-  renderer.shadowMap.enabled = false;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   containerElement.appendChild(renderer.domElement);
   return renderer;
 }
@@ -97,6 +104,33 @@ function overlapsFurniture(a, b) {
   return axMin < bxMax && axMax > bxMin && azMin < bzMax && azMax > bzMin;
 }
 
+function createDecimalRangeField(labelText, inputId, defaultValue, min, max, step = 0.1) {
+  const wrapper = document.createElement('label');
+  wrapper.className = 'plan-control';
+  wrapper.setAttribute('for', inputId);
+  const labelRow = document.createElement('span');
+  labelRow.textContent = labelText;
+  const valueReadout = document.createElement('strong');
+  valueReadout.textContent = Number(defaultValue).toFixed(1);
+  labelRow.append(' ', valueReadout);
+
+  const input = document.createElement('input');
+  input.id = inputId;
+  input.type = 'range';
+  input.value = String(defaultValue);
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  const syncReadout = () => {
+    valueReadout.textContent = (Number(input.value) || Number(defaultValue)).toFixed(1);
+  };
+  input.addEventListener('input', syncReadout);
+  syncReadout();
+  wrapper.append(labelRow, input);
+
+  return { wrapper, input, syncReadout };
+}
+
 export function mountStageFromSvgRoute(containerElement) {
   containerElement.className = 'planner-root';
   containerElement.replaceChildren();
@@ -161,6 +195,41 @@ export function mountStageFromSvgRoute(containerElement) {
   deleteAllNpcButton.type = 'button';
   deleteAllNpcButton.className = 'plan-download stage-delete-npc';
   deleteAllNpcButton.textContent = 'Delete all NPCs';
+  const lightPanelTitle = document.createElement('h2');
+  lightPanelTitle.className = 'stage-npc-title';
+  lightPanelTitle.textContent = 'Lights';
+  const lightList = document.createElement('ul');
+  lightList.className = 'stage-npc-list';
+  const addLightButton = document.createElement('button');
+  addLightButton.type = 'button';
+  addLightButton.className = 'plan-download stage-delete-npc';
+  addLightButton.textContent = 'Add light';
+  const deleteLightButton = document.createElement('button');
+  deleteLightButton.type = 'button';
+  deleteLightButton.className = 'plan-download stage-delete-npc';
+  deleteLightButton.textContent = 'Delete selected light';
+  const deleteAllLightsButton = document.createElement('button');
+  deleteAllLightsButton.type = 'button';
+  deleteAllLightsButton.className = 'plan-download stage-delete-npc';
+  deleteAllLightsButton.textContent = 'Delete all lights';
+  const lightIntensityField = createDecimalRangeField(
+    'Light intensity',
+    'stage-selected-light-intensity',
+    1.2,
+    LIGHT_INTENSITY_MIN,
+    LIGHT_INTENSITY_MAX,
+    0.1
+  );
+  const lightRadiusField = createDecimalRangeField(
+    'Light radius',
+    'stage-selected-light-radius',
+    7.5,
+    LIGHT_RADIUS_MIN,
+    LIGHT_RADIUS_MAX,
+    0.1
+  );
+  lightIntensityField.input.disabled = true;
+  lightRadiusField.input.disabled = true;
 
   const panelInfo = document.createElement('div');
   panelInfo.className = 'stage-panel-info';
@@ -186,6 +255,13 @@ export function mountStageFromSvgRoute(containerElement) {
     addNpcButton,
     deleteNpcButton,
     deleteAllNpcButton,
+    lightPanelTitle,
+    lightList,
+    addLightButton,
+    deleteLightButton,
+    deleteAllLightsButton,
+    lightIntensityField.wrapper,
+    lightRadiusField.wrapper,
     panelInfo
   );
   const collapseState = readPanelCollapseState();
@@ -232,18 +308,13 @@ export function mountStageFromSvgRoute(containerElement) {
   controls3d.target.set(0, 0, 0);
   controls3d.update();
   renderer.domElement.style.cursor = 'grab';
-
-  const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-  scene.add(ambient);
-  const directional = new THREE.DirectionalLight(0xffffff, 1.2);
-  directional.position.set(24, 36, 18);
-  directional.castShadow = false;
-  scene.add(directional);
   scene.add(new THREE.GridHelper(200, 40, 0x32475f, 0x233345));
 
   let stageGroup = new THREE.Group();
   let npcPreviewGroup = new THREE.Group();
   npcPreviewGroup.name = 'npc-preview-group';
+  let lightPreviewGroup = new THREE.Group();
+  lightPreviewGroup.name = 'stage-light-preview-group';
   let latestLoadedSvg = '';
   let latestStageData = null;
   let isDraggingStart = false;
@@ -252,11 +323,17 @@ export function mountStageFromSvgRoute(containerElement) {
   let draggingNpcSpawnId = null;
   let draggingNpcSpawnIndex = null;
   let draggingNpcMarker = null;
+  let draggingLightSpawnId = null;
+  let draggingLightSpawnIndex = null;
+  let draggingLightMarker = null;
   let selectedNpcSpawnId = null;
   let selectedNpcSpawnIndex = null;
+  let selectedLightSpawnId = null;
+  let selectedLightSpawnIndex = null;
   const startPosition = new THREE.Vector3(0, START_MARKER_HEIGHT / 2, 0);
   scene.add(stageGroup);
   scene.add(npcPreviewGroup);
+  scene.add(lightPreviewGroup);
 
   const playerStartMarker = new THREE.Group();
   playerStartMarker.name = 'player-start-marker';
@@ -428,6 +505,33 @@ export function mountStageFromSvgRoute(containerElement) {
     window.localStorage.setItem(LATEST_PLAN_STORAGE_KEY, latestLoadedSvg);
   }
 
+  function persistLightSpawnsToSvg() {
+    if (latestStageData == null) return;
+    normalizeLightSpawns(latestStageData);
+    const parser = new DOMParser();
+    const documentNode = parser.parseFromString(latestLoadedSvg, 'image/svg+xml');
+    const svgElement = documentNode.querySelector('svg');
+    if (svgElement == null) return;
+    const metadata = decodeSvgMetadata(svgElement);
+    if (metadata == null) return;
+    const padding = Number(metadata.padding) || 0;
+    const lightSpawns = Array.isArray(latestStageData.lightSpawns) ? latestStageData.lightSpawns : [];
+    metadata.lightSpawns = lightSpawns.map((item, index) => ({
+      id: item.id ?? `light-${index + 1}`,
+      x: item.x + latestStageData.width / 2 - padding,
+      y: item.z + latestStageData.height / 2 - padding,
+      height: Number(item.height) || 2.35,
+      intensity: Number(item.intensity) || 1.2,
+      range: Number(item.range) || 7.5,
+      color: typeof item.color === 'string' && item.color.length > 0 ? item.color : '#ffe8b8',
+    }));
+    const metadataNode = svgElement.querySelector('#occult-floorplan-meta');
+    if (metadataNode == null) return;
+    metadataNode.textContent = encodeSvgMetadata(metadata);
+    latestLoadedSvg = svgElement.outerHTML;
+    window.localStorage.setItem(LATEST_PLAN_STORAGE_KEY, latestLoadedSvg);
+  }
+
   function pointerFromEvent(event) {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -459,7 +563,11 @@ export function mountStageFromSvgRoute(containerElement) {
   }
 
   function exportStageToGlb(stageData) {
-    const runtimeGroup = buildStageGroup(stageData, { mode: 'runtime' });
+    const runtimeGroup = buildStageGroup(stageData, {
+      mode: 'runtime',
+      includeShadowOccluder: false,
+      includePointLights: false,
+    });
     const playerStartNode = new THREE.Object3D();
     playerStartNode.name = 'player-start';
     playerStartNode.position.set(startPosition.x, 0, startPosition.z);
@@ -470,6 +578,19 @@ export function mountStageFromSvgRoute(containerElement) {
       npcNode.name = `npc-spawn-${index + 1}`;
       npcNode.position.set(Number(spawn.x) || 0, 0, Number(spawn.z) || 0);
       runtimeGroup.add(npcNode);
+    });
+    const lightSpawns = Array.isArray(stageData.lightSpawns) ? stageData.lightSpawns : [];
+    lightSpawns.forEach((spawn, index) => {
+      const lightNode = new THREE.Object3D();
+      lightNode.name = `stage-light-${index + 1}`;
+      lightNode.position.set(Number(spawn.x) || 0, 0, Number(spawn.z) || 0);
+      lightNode.userData = {
+        intensity: Number(spawn.intensity) || 1.2,
+        range: Number(spawn.range) || 7.5,
+        height: Number(spawn.height) || 2.35,
+        color: typeof spawn.color === 'string' && spawn.color.length > 0 ? spawn.color : '#ffe8b8',
+      };
+      runtimeGroup.add(lightNode);
     });
     const exporter = new GLTFExporter();
     return new Promise((resolve, reject) => {
@@ -494,10 +615,11 @@ export function mountStageFromSvgRoute(containerElement) {
 
   function updateStats(stageData) {
     const npcCount = Array.isArray(stageData.npcSpawns) ? stageData.npcSpawns.length : 0;
+    const lightCount = Array.isArray(stageData.lightSpawns) ? stageData.lightSpawns.length : 0;
     const seedText = Number.isFinite(Number(stageData.seed)) ? `Seed: ${Number(stageData.seed)} · ` : '';
     stats.textContent =
       `${seedText}Walls: ${stageData.walls.length} · Doors: ${stageData.doors.length} · ` +
-      `Windows: ${stageData.windows.length} · NPC spawns: ${npcCount}`;
+      `Windows: ${stageData.windows.length} · NPC spawns: ${npcCount} · Lights: ${lightCount}`;
   }
 
   function renderNpcList() {
@@ -527,10 +649,46 @@ export function mountStageFromSvgRoute(containerElement) {
       button.className = 'stage-npc-select';
       button.textContent = `${spawnId} (${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)})`;
       button.addEventListener('click', () => {
+        setSelectedLightMarker(null, null);
         setSelectedNpcMarker(spawnId, index);
       });
       item.appendChild(button);
       npcList.appendChild(item);
+    });
+  }
+
+  function renderLightList() {
+    lightList.replaceChildren();
+    const spawns = Array.isArray(latestStageData?.lightSpawns) ? latestStageData.lightSpawns : [];
+    if (spawns.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'stage-npc-empty';
+      empty.textContent = 'No stage lights in this level.';
+      lightList.appendChild(empty);
+      return;
+    }
+
+    spawns.forEach((spawn, index) => {
+      const item = document.createElement('li');
+      item.className = 'stage-npc-item';
+      const spawnId = spawn.id ?? `light-${index + 1}`;
+      const selected =
+        (selectedLightSpawnId != null && selectedLightSpawnId === spawnId) ||
+        (selectedLightSpawnIndex != null && selectedLightSpawnIndex === index);
+      if (selected) {
+        item.classList.add('is-selected');
+      }
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'stage-npc-select';
+      button.textContent = `${spawnId} (${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)})`;
+      button.addEventListener('click', () => {
+        setSelectedNpcMarker(null, null);
+        setSelectedLightMarker(spawnId, index);
+      });
+      item.appendChild(button);
+      lightList.appendChild(item);
     });
   }
 
@@ -550,6 +708,32 @@ export function mountStageFromSvgRoute(containerElement) {
       normalized.push({ id: uniqueId, x, z });
     }
     stageData.npcSpawns = normalized;
+  }
+
+  function normalizeLightSpawns(stageData) {
+    const source = Array.isArray(stageData?.lightSpawns) ? stageData.lightSpawns : [];
+    const idCounts = new Map();
+    const normalized = [];
+    for (let index = 0; index < source.length; index++) {
+      const item = source[index];
+      const x = Number(item?.x);
+      const z = Number(item?.z);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      const rawId = String(item?.id ?? `light-${index + 1}`);
+      const nextCount = (idCounts.get(rawId) ?? 0) + 1;
+      idCounts.set(rawId, nextCount);
+      const uniqueId = nextCount === 1 ? rawId : `${rawId}-${nextCount}`;
+      normalized.push({
+        id: uniqueId,
+        x,
+        z,
+        height: Number(item?.height) || 2.35,
+        intensity: Number(item?.intensity) || 1.2,
+        range: Number(item?.range) || 7.5,
+        color: typeof item?.color === 'string' && item.color.length > 0 ? item.color : '#ffe8b8',
+      });
+    }
+    stageData.lightSpawns = normalized;
   }
 
   function setSelectedNpcMarker(id, index) {
@@ -576,10 +760,70 @@ export function mountStageFromSvgRoute(containerElement) {
     renderNpcList();
   }
 
+  function readSelectedLightSpawn() {
+    if (!Array.isArray(latestStageData?.lightSpawns)) return null;
+    if (selectedLightSpawnId != null) {
+      const byId = latestStageData.lightSpawns.find((item) => item.id === selectedLightSpawnId);
+      if (byId != null) return byId;
+    }
+    if (selectedLightSpawnIndex != null) {
+      return latestStageData.lightSpawns[selectedLightSpawnIndex] ?? null;
+    }
+    return null;
+  }
+
+  function syncSelectedLightControls() {
+    const selected = readSelectedLightSpawn();
+    lightIntensityField.input.disabled = selected == null;
+    lightRadiusField.input.disabled = selected == null;
+    lightIntensityField.input.value = selected == null ? '1.2' : String((Number(selected.intensity) || 1.2).toFixed(1));
+    lightRadiusField.input.value = selected == null ? '7.5' : String((Number(selected.range) || 7.5).toFixed(1));
+    lightIntensityField.syncReadout();
+    lightRadiusField.syncReadout();
+  }
+
+  function setSelectedLightMarker(id, index) {
+    selectedLightSpawnId = id;
+    selectedLightSpawnIndex = index;
+    lightPreviewGroup.children.forEach((marker) => {
+      if (marker.userData?.kind !== 'stageLight') return;
+      const matchesId = id != null && marker.userData.id === id;
+      const matchesIndex = index != null && marker.userData.index === index;
+      const selected = matchesId || matchesIndex;
+      marker.scale.setScalar(selected ? 1.25 : 1);
+      const bulb = marker.getObjectByName('stage-light-bulb');
+      if (bulb?.material?.color != null) {
+        bulb.material.color.setHex(selected ? STAGE_LIGHT_PREVIEW_SELECTED_COLOR : STAGE_LIGHT_PREVIEW_COLOR);
+      }
+    });
+    if (id != null || index != null) {
+      setStatus('Light selected. Drag to move.', 'info');
+    }
+    renderLightList();
+    syncSelectedLightControls();
+  }
+
   function readNpcSpawnUserDataFromObject(object3d) {
     let current = object3d;
     while (current != null) {
       if (current.userData?.kind === 'npcSpawn' && current.isGroup === true) {
+        return {
+          marker: current,
+          id: current.userData.id ?? null,
+          index: Number.isFinite(Number(current.userData.index))
+            ? Number(current.userData.index)
+            : null,
+        };
+      }
+      current = current.parent ?? null;
+    }
+    return null;
+  }
+
+  function readLightSpawnUserDataFromObject(object3d) {
+    let current = object3d;
+    while (current != null) {
+      if (current.userData?.kind === 'stageLight' && current.isGroup === true) {
         return {
           marker: current,
           id: current.userData.id ?? null,
@@ -643,6 +887,87 @@ export function mountStageFromSvgRoute(containerElement) {
     return group;
   }
 
+  function buildLightPreviewGroup(stageData) {
+    const group = new THREE.Group();
+    group.name = 'stage-light-preview-group';
+    const lightSpawns = Array.isArray(stageData.lightSpawns) ? stageData.lightSpawns : [];
+    if (lightSpawns.length === 0) {
+      return group;
+    }
+    lightSpawns.forEach((item, index) => {
+      const marker = new THREE.Group();
+      const markerId = item.id ?? `light-${index + 1}`;
+      marker.name = `stage-light-${markerId}`;
+      marker.userData = {
+        kind: 'stageLight',
+        id: markerId,
+        index,
+      };
+      const light = new THREE.PointLight(
+        new THREE.Color(item.color),
+        Number(item.intensity) || 1.2,
+        Number(item.range) || 7.5,
+        2
+      );
+      light.position.set(0, Number(item.height) || 2.35, 0);
+      light.castShadow = true;
+      light.shadow.mapSize.set(512, 512);
+      light.shadow.bias = -0.0002;
+      light.shadow.normalBias = 0.02;
+      marker.add(light);
+      const bulb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.15, 16, 12),
+        new THREE.MeshStandardMaterial({
+          color: STAGE_LIGHT_PREVIEW_COLOR,
+          emissive: STAGE_LIGHT_PREVIEW_COLOR,
+          emissiveIntensity: 0.7,
+          roughness: 0.2,
+          metalness: 0.05,
+        })
+      );
+      bulb.name = 'stage-light-bulb';
+      bulb.position.set(0, Number(item.height) || 2.35, 0);
+      bulb.castShadow = false;
+      marker.add(bulb);
+      marker.position.set(item.x, 0, item.z);
+      group.add(marker);
+    });
+    return group;
+  }
+
+  function applySelectedLightSettings() {
+    const selected = readSelectedLightSpawn();
+    if (selected == null) return;
+    const nextIntensity = Math.max(
+      LIGHT_INTENSITY_MIN,
+      Math.min(LIGHT_INTENSITY_MAX, Number(lightIntensityField.input.value) || 1.2)
+    );
+    const nextRange = Math.max(
+      LIGHT_RADIUS_MIN,
+      Math.min(LIGHT_RADIUS_MAX, Number(lightRadiusField.input.value) || 7.5)
+    );
+    selected.intensity = nextIntensity;
+    selected.range = nextRange;
+    const marker = lightPreviewGroup.children.find((child) => {
+      if (child.userData?.kind !== 'stageLight') return false;
+      if (selectedLightSpawnId != null && child.userData.id === selectedLightSpawnId) return true;
+      if (selectedLightSpawnIndex != null && child.userData.index === selectedLightSpawnIndex) return true;
+      return false;
+    });
+    const pointLight = marker?.children?.find((child) => child.isPointLight === true);
+    if (pointLight != null) {
+      pointLight.intensity = nextIntensity;
+      pointLight.distance = nextRange;
+    }
+    lightIntensityField.input.value = nextIntensity.toFixed(1);
+    lightRadiusField.input.value = nextRange.toFixed(1);
+    lightIntensityField.syncReadout();
+    lightRadiusField.syncReadout();
+    renderLightList();
+    persistLightSpawnsToSvg();
+    setStatus('Light settings updated.', 'success');
+  }
+
   function fitCamera() {
     const bounds = new THREE.Box3().setFromObject(stageGroup);
     const sphere = new THREE.Sphere();
@@ -695,6 +1020,7 @@ export function mountStageFromSvgRoute(containerElement) {
       const previewComplexity = computePreviewComplexity(stageData);
       const useFastPreview = previewComplexity >= PREVIEW_FAST_MODE_COMPLEXITY_THRESHOLD;
       normalizeNpcSpawns(stageData);
+      normalizeLightSpawns(stageData);
       latestStageData = stageData;
       latestLoadedSvg = svgText;
       window.localStorage.setItem(LATEST_PLAN_STORAGE_KEY, svgText);
@@ -712,10 +1038,16 @@ export function mountStageFromSvgRoute(containerElement) {
       disposeMeshResources(npcPreviewGroup);
       npcPreviewGroup = buildNpcPreviewGroup(stageData);
       scene.add(npcPreviewGroup);
+      scene.remove(lightPreviewGroup);
+      disposeMeshResources(lightPreviewGroup);
+      lightPreviewGroup = buildLightPreviewGroup(stageData);
+      scene.add(lightPreviewGroup);
       setSelectedNpcMarker(null, null);
+      setSelectedLightMarker(null, null);
       fitCamera();
       updateStats(stageData);
       renderNpcList();
+      renderLightList();
       const savedStart = readSavedPlayerStart();
       if (stageData.playerStart != null) {
         setStartPosition(stageData.playerStart, true);
@@ -737,6 +1069,9 @@ export function mountStageFromSvgRoute(containerElement) {
       );
     }
   }
+
+  lightIntensityField.input.addEventListener('input', applySelectedLightSettings);
+  lightRadiusField.input.addEventListener('input', applySelectedLightSettings);
 
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
@@ -778,6 +1113,7 @@ export function mountStageFromSvgRoute(containerElement) {
       draggingNpcMarker = selected.marker ?? null;
       draggingNpcSpawnId = selected.id;
       draggingNpcSpawnIndex = selected.index;
+      setSelectedLightMarker(null, null);
       setSelectedNpcMarker(draggingNpcSpawnId, draggingNpcSpawnIndex);
       controls3d.enabled = false;
       renderer.domElement.style.cursor = 'grabbing';
@@ -785,7 +1121,24 @@ export function mountStageFromSvgRoute(containerElement) {
       event.preventDefault();
       return;
     }
+    const lightHits = raycaster.intersectObject(lightPreviewGroup, true);
+    const lightHit = lightHits.find((hit) => readLightSpawnUserDataFromObject(hit.object) != null);
+    if (lightHit != null) {
+      const selected = readLightSpawnUserDataFromObject(lightHit.object);
+      if (selected == null) return;
+      draggingLightMarker = selected.marker ?? null;
+      draggingLightSpawnId = selected.id;
+      draggingLightSpawnIndex = selected.index;
+      setSelectedNpcMarker(null, null);
+      setSelectedLightMarker(draggingLightSpawnId, draggingLightSpawnIndex);
+      controls3d.enabled = false;
+      renderer.domElement.style.cursor = 'grabbing';
+      renderer.domElement.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      return;
+    }
     setSelectedNpcMarker(null, null);
+    setSelectedLightMarker(null, null);
     const markerHits = raycaster.intersectObject(playerStartMarker, true);
     if (markerHits.length === 0) return;
     isDraggingStart = true;
@@ -858,10 +1211,32 @@ export function mountStageFromSvgRoute(containerElement) {
         stageDataTarget.z = candidate.z;
       }
     }
+    if (draggingLightSpawnId != null || draggingLightSpawnIndex != null) {
+      const candidate = clampToStageBounds({ x: dragPoint.x, z: dragPoint.z }, latestStageData);
+      const marker = draggingLightMarker;
+      if (marker == null) return;
+      marker.position.x = candidate.x;
+      marker.position.z = candidate.z;
+      const stageDataTarget =
+        latestStageData.lightSpawns?.find((item) => item.id === draggingLightSpawnId) ??
+        (draggingLightSpawnIndex != null ? latestStageData.lightSpawns?.[draggingLightSpawnIndex] : null);
+      if (stageDataTarget != null) {
+        stageDataTarget.x = candidate.x;
+        stageDataTarget.z = candidate.z;
+      }
+      return;
+    }
   });
 
   const stopDragging = (event) => {
-    if (!isDraggingStart && draggingFurnitureId == null && draggingNpcSpawnId == null && draggingNpcSpawnIndex == null) return;
+    if (
+      !isDraggingStart &&
+      draggingFurnitureId == null &&
+      draggingNpcSpawnId == null &&
+      draggingNpcSpawnIndex == null &&
+      draggingLightSpawnId == null &&
+      draggingLightSpawnIndex == null
+    ) return;
     if (isDraggingStart) {
       persistStartPosition();
       persistPlayerStartToSvg();
@@ -893,11 +1268,18 @@ export function mountStageFromSvgRoute(containerElement) {
         setStatus('NPC spawn updated.', 'success');
       }
     }
+    if (draggingLightSpawnId != null || draggingLightSpawnIndex != null) {
+      persistLightSpawnsToSvg();
+      setStatus('Light updated.', 'success');
+    }
     draggingFurnitureId = null;
     draggingFurnitureMetaIndex = null;
     draggingNpcMarker = null;
     draggingNpcSpawnId = null;
     draggingNpcSpawnIndex = null;
+    draggingLightMarker = null;
+    draggingLightSpawnId = null;
+    draggingLightSpawnIndex = null;
     isDraggingStart = false;
     controls3d.enabled = true;
     renderer.domElement.style.cursor = 'grab';
@@ -913,37 +1295,52 @@ export function mountStageFromSvgRoute(containerElement) {
     if (!isDeleteKey) return;
     if (isTypingTarget(event.target)) return;
     if (latestStageData == null) return;
-    if (selectedNpcSpawnId == null && selectedNpcSpawnIndex == null) return;
+    if (selectedNpcSpawnId != null || selectedNpcSpawnIndex != null) {
+      const currentSpawns = Array.isArray(latestStageData.npcSpawns) ? latestStageData.npcSpawns : [];
+      const nextSpawns = currentSpawns.filter((item, index) => {
+        if (selectedNpcSpawnId != null && item.id === selectedNpcSpawnId) return false;
+        if (selectedNpcSpawnIndex != null && index === selectedNpcSpawnIndex) return false;
+        return true;
+      });
+      if (nextSpawns.length === currentSpawns.length) return;
 
-    const currentSpawns = Array.isArray(latestStageData.npcSpawns) ? latestStageData.npcSpawns : [];
-    const nextSpawns = currentSpawns.filter((item, index) => {
-      if (selectedNpcSpawnId != null && item.id === selectedNpcSpawnId) return false;
-      if (selectedNpcSpawnIndex != null && index === selectedNpcSpawnIndex) return false;
-      return true;
-    });
-    if (nextSpawns.length === currentSpawns.length) return;
+      latestStageData.npcSpawns = nextSpawns;
+      normalizeNpcSpawns(latestStageData);
+      scene.remove(npcPreviewGroup);
+      disposeMeshResources(npcPreviewGroup);
+      npcPreviewGroup = buildNpcPreviewGroup(latestStageData);
+      scene.add(npcPreviewGroup);
+      setSelectedNpcMarker(null, null);
+      persistNpcSpawnsToSvg();
+      updateStats(latestStageData);
+      renderNpcList();
+      setStatus('NPC spawn deleted.', 'success');
+      event.preventDefault();
+      return;
+    }
 
-    latestStageData.npcSpawns = nextSpawns;
-    normalizeNpcSpawns(latestStageData);
-    scene.remove(npcPreviewGroup);
-    npcPreviewGroup.traverse((child) => {
-      if (child.isMesh) {
-        child.geometry?.dispose?.();
-        if (Array.isArray(child.material)) {
-          child.material.forEach((material) => material.dispose?.());
-        } else {
-          child.material?.dispose?.();
-        }
-      }
-    });
-    npcPreviewGroup = buildNpcPreviewGroup(latestStageData);
-    scene.add(npcPreviewGroup);
-    setSelectedNpcMarker(null, null);
-    persistNpcSpawnsToSvg();
-    updateStats(latestStageData);
-    renderNpcList();
-    setStatus('NPC spawn deleted.', 'success');
-    event.preventDefault();
+    if (selectedLightSpawnId != null || selectedLightSpawnIndex != null) {
+      const currentSpawns = Array.isArray(latestStageData.lightSpawns) ? latestStageData.lightSpawns : [];
+      const nextSpawns = currentSpawns.filter((item, index) => {
+        if (selectedLightSpawnId != null && item.id === selectedLightSpawnId) return false;
+        if (selectedLightSpawnIndex != null && index === selectedLightSpawnIndex) return false;
+        return true;
+      });
+      if (nextSpawns.length === currentSpawns.length) return;
+
+      latestStageData.lightSpawns = nextSpawns;
+      normalizeLightSpawns(latestStageData);
+      scene.remove(lightPreviewGroup);
+      disposeMeshResources(lightPreviewGroup);
+      lightPreviewGroup = buildLightPreviewGroup(latestStageData);
+      scene.add(lightPreviewGroup);
+      setSelectedLightMarker(null, null);
+      persistLightSpawnsToSvg();
+      updateStats(latestStageData);
+      renderLightList();
+      setStatus('Light deleted.', 'success');
+      event.preventDefault();
+    }
   });
 
   deleteNpcButton.addEventListener('click', () => {
@@ -971,6 +1368,31 @@ export function mountStageFromSvgRoute(containerElement) {
     renderNpcList();
     setStatus('NPC spawn deleted.', 'success');
   });
+  deleteLightButton.addEventListener('click', () => {
+    if (latestStageData == null) return;
+    if (selectedLightSpawnId == null && selectedLightSpawnIndex == null) {
+      setStatus('Select a light from the list first.', 'error');
+      return;
+    }
+    const currentSpawns = Array.isArray(latestStageData.lightSpawns) ? latestStageData.lightSpawns : [];
+    const nextSpawns = currentSpawns.filter((item, index) => {
+      if (selectedLightSpawnId != null && item.id === selectedLightSpawnId) return false;
+      if (selectedLightSpawnIndex != null && index === selectedLightSpawnIndex) return false;
+      return true;
+    });
+    if (nextSpawns.length === currentSpawns.length) return;
+    latestStageData.lightSpawns = nextSpawns;
+    normalizeLightSpawns(latestStageData);
+    scene.remove(lightPreviewGroup);
+    disposeMeshResources(lightPreviewGroup);
+    lightPreviewGroup = buildLightPreviewGroup(latestStageData);
+    scene.add(lightPreviewGroup);
+    setSelectedLightMarker(null, null);
+    persistLightSpawnsToSvg();
+    updateStats(latestStageData);
+    renderLightList();
+    setStatus('Light deleted.', 'success');
+  });
 
   addNpcButton.addEventListener('click', () => {
     if (latestStageData == null) {
@@ -997,6 +1419,36 @@ export function mountStageFromSvgRoute(containerElement) {
     renderNpcList();
     setStatus('NPC spawn added.', 'success');
   });
+  addLightButton.addEventListener('click', () => {
+    if (latestStageData == null) {
+      setStatus('Load a stage first.', 'error');
+      return;
+    }
+    const currentSpawns = Array.isArray(latestStageData.lightSpawns) ? latestStageData.lightSpawns : [];
+    const id = `light-${currentSpawns.length + 1}`;
+    const seedOffset = currentSpawns.length * 0.7;
+    const nextSpawn = {
+      id,
+      x: Math.max(-latestStageData.width / 2, Math.min(latestStageData.width / 2, seedOffset)),
+      z: Math.max(-latestStageData.height / 2, Math.min(latestStageData.height / 2, seedOffset)),
+      height: 2.35,
+      intensity: 1.2,
+      range: 7.5,
+      color: '#ffe8b8',
+    };
+    latestStageData.lightSpawns = [...currentSpawns, nextSpawn];
+    normalizeLightSpawns(latestStageData);
+    scene.remove(lightPreviewGroup);
+    disposeMeshResources(lightPreviewGroup);
+    lightPreviewGroup = buildLightPreviewGroup(latestStageData);
+    scene.add(lightPreviewGroup);
+    setSelectedNpcMarker(null, null);
+    setSelectedLightMarker(nextSpawn.id, latestStageData.lightSpawns.length - 1);
+    persistLightSpawnsToSvg();
+    updateStats(latestStageData);
+    renderLightList();
+    setStatus('Light added.', 'success');
+  });
 
   deleteAllNpcButton.addEventListener('click', () => {
     if (latestStageData == null) {
@@ -1018,6 +1470,27 @@ export function mountStageFromSvgRoute(containerElement) {
     updateStats(latestStageData);
     renderNpcList();
     setStatus('All NPC spawns deleted.', 'success');
+  });
+  deleteAllLightsButton.addEventListener('click', () => {
+    if (latestStageData == null) {
+      setStatus('Load a stage first.', 'error');
+      return;
+    }
+    const currentSpawns = Array.isArray(latestStageData.lightSpawns) ? latestStageData.lightSpawns : [];
+    if (currentSpawns.length === 0) {
+      setStatus('No lights to delete.', 'info');
+      return;
+    }
+    latestStageData.lightSpawns = [];
+    scene.remove(lightPreviewGroup);
+    disposeMeshResources(lightPreviewGroup);
+    lightPreviewGroup = buildLightPreviewGroup(latestStageData);
+    scene.add(lightPreviewGroup);
+    setSelectedLightMarker(null, null);
+    persistLightSpawnsToSvg();
+    updateStats(latestStageData);
+    renderLightList();
+    setStatus('All lights deleted.', 'success');
   });
 
   testFpsButton.addEventListener('click', () => {
@@ -1094,5 +1567,6 @@ export function mountStageFromSvgRoute(containerElement) {
     setStatus('Upload an SVG to preview the 3D stage.', 'info');
   }
   renderNpcList();
+  renderLightList();
   updateStartReadout();
 }

@@ -8,6 +8,13 @@ import { decodeSvgMetadata } from '../shared/svgMetadata.js';
 const WALL_HEIGHT = 3;
 const WALL_THICKNESS = 0.2;
 const ROOF_THICKNESS = 0.24;
+const ROOF_OVERHANG = 0.08;
+const ROOF_WALL_OVERLAP_Y = 0.04;
+const ROOF_SHADOW_OCCLUDER_THICKNESS = 0.62;
+const ROOF_SHADOW_OCCLUDER_PADDING = 0.9;
+const WALL_TOP_SEAL_HEIGHT = 0.12;
+const WALL_TOP_SEAL_EXTRA_THICKNESS = 0.14;
+const WALL_CORNER_SEAL_SIZE = 0.34;
 const DOOR_HEIGHT = 2.2;
 const WINDOW_SILL_HEIGHT = 1;
 const WINDOW_HEIGHT = 1.1;
@@ -26,6 +33,7 @@ function decodeFloorPlanMetadata(svgElement) {
     rooms: parsed.rooms,
     hallways: Array.isArray(parsed.hallways) ? parsed.hallways : [],
     furniture: Array.isArray(parsed.furniture) ? parsed.furniture : [],
+    lightSpawns: Array.isArray(parsed.lightSpawns) ? parsed.lightSpawns : [],
     npcSpawns: Array.isArray(parsed.npcSpawns) ? parsed.npcSpawns : [],
     playerStart: parsed.playerStart ?? null,
   };
@@ -167,6 +175,24 @@ export function parseFloorPlanSvg(svgText) {
       })
       .filter((item) => item != null)
     : [];
+  const lightSpawns = Array.isArray(metadata?.lightSpawns)
+    ? metadata.lightSpawns
+      .map((item, index) => {
+        const x = Number(item?.x);
+        const y = Number(item?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        return {
+          id: item.id ?? `light-${index + 1}`,
+          x: fromPlanToWorldX(x),
+          z: fromPlanToWorldZ(y),
+          height: Number(item.height) || 2.35,
+          intensity: Number(item.intensity) || 1.2,
+          range: Number(item.range) || 7.5,
+          color: typeof item.color === 'string' && item.color.length > 0 ? item.color : '#ffe8b8',
+        };
+      })
+      .filter((item) => item != null)
+    : [];
   const roofCellKeys = new Set();
   if (Array.isArray(metadata?.rooms)) {
     for (const room of metadata.rooms) {
@@ -210,6 +236,7 @@ export function parseFloorPlanSvg(svgText) {
     furniture,
     playerStart,
     npcSpawns,
+    lightSpawns,
     roofCells,
   };
 }
@@ -285,6 +312,53 @@ function addDoorLintelGeometry(group, doorSegments, wallMaterial) {
     if (lintel != null) {
       group.add(lintel);
     }
+  }
+}
+
+function addWallTopSealGeometry(group, wallSegments, wallMaterial) {
+  const baseY = WALL_HEIGHT - WALL_TOP_SEAL_HEIGHT * 0.5;
+  for (const wallSegment of wallSegments) {
+    const cap = createSegmentMesh(
+      wallSegment,
+      WALL_THICKNESS + WALL_TOP_SEAL_EXTRA_THICKNESS,
+      WALL_TOP_SEAL_HEIGHT,
+      wallMaterial,
+      baseY
+    );
+    if (cap != null) {
+      cap.name = 'wall-top-seal';
+      group.add(cap);
+    }
+  }
+}
+
+function addWallCornerSealGeometry(group, wallSegments, wallMaterial) {
+  const endpointUseCount = new Map();
+  for (const segment of wallSegments) {
+    const endpoints = [
+      `${segment.x1.toFixed(4)},${segment.z1.toFixed(4)}`,
+      `${segment.x2.toFixed(4)},${segment.z2.toFixed(4)}`,
+    ];
+    for (const endpoint of endpoints) {
+      endpointUseCount.set(endpoint, (endpointUseCount.get(endpoint) ?? 0) + 1);
+    }
+  }
+
+  for (const [endpoint, useCount] of endpointUseCount.entries()) {
+    if (useCount < 2) continue;
+    const [xRaw, zRaw] = endpoint.split(',');
+    const x = Number(xRaw);
+    const z = Number(zRaw);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+    const cornerSeal = new THREE.Mesh(
+      new THREE.BoxGeometry(WALL_CORNER_SEAL_SIZE, WALL_HEIGHT, WALL_CORNER_SEAL_SIZE),
+      wallMaterial
+    );
+    cornerSeal.position.set(x, WALL_HEIGHT / 2, z);
+    cornerSeal.castShadow = true;
+    cornerSeal.receiveShadow = true;
+    cornerSeal.name = 'wall-corner-seal';
+    group.add(cornerSeal);
   }
 }
 
@@ -510,12 +584,13 @@ function addRoofGeometry(group, stageData, material, stageFootprint) {
   if (Array.isArray(stageData.roofCells) && stageData.roofCells.length > 0) {
     for (const cell of stageData.roofCells) {
       const roofTile = new THREE.Mesh(
-        new THREE.BoxGeometry(1.02, ROOF_THICKNESS, 1.02),
+        new THREE.BoxGeometry(1 + ROOF_OVERHANG, ROOF_THICKNESS, 1 + ROOF_OVERHANG),
         material
       );
-      roofTile.position.set(cell.x, WALL_HEIGHT + ROOF_THICKNESS / 2, cell.z);
+      // Sink roof slightly into wall tops to avoid thin light leaks at wall/roof seams.
+      roofTile.position.set(cell.x, WALL_HEIGHT + ROOF_THICKNESS / 2 - ROOF_WALL_OVERLAP_Y, cell.z);
       roofTile.castShadow = true;
-      roofTile.receiveShadow = true;
+      roofTile.receiveShadow = false;
       roofTile.name = 'stage-roof-tile';
       roofTile.userData = {
         kind: 'roof',
@@ -527,16 +602,20 @@ function addRoofGeometry(group, stageData, material, stageFootprint) {
   }
 
   const fallbackRoof = new THREE.Mesh(
-    new THREE.BoxGeometry(stageData.width, ROOF_THICKNESS, stageData.height),
+    new THREE.BoxGeometry(
+      stageData.width + ROOF_OVERHANG,
+      ROOF_THICKNESS,
+      stageData.height + ROOF_OVERHANG
+    ),
     material
   );
   fallbackRoof.position.set(
     stageFootprint.centerX,
-    WALL_HEIGHT + ROOF_THICKNESS / 2,
+    WALL_HEIGHT + ROOF_THICKNESS / 2 - ROOF_WALL_OVERLAP_Y,
     stageFootprint.centerZ
   );
   fallbackRoof.castShadow = true;
-  fallbackRoof.receiveShadow = true;
+  fallbackRoof.receiveShadow = false;
   fallbackRoof.name = 'stage-roof';
   fallbackRoof.userData = {
     kind: 'roof',
@@ -545,12 +624,65 @@ function addRoofGeometry(group, stageData, material, stageFootprint) {
   group.add(fallbackRoof);
 }
 
+function addRoofShadowOccluderGeometry(group, stageFootprint) {
+  const occluderMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  occluderMaterial.colorWrite = false;
+  occluderMaterial.depthWrite = false;
+
+  const occluder = new THREE.Mesh(
+    new THREE.BoxGeometry(
+      stageFootprint.width + ROOF_SHADOW_OCCLUDER_PADDING,
+      ROOF_SHADOW_OCCLUDER_THICKNESS,
+      stageFootprint.height + ROOF_SHADOW_OCCLUDER_PADDING
+    ),
+    occluderMaterial
+  );
+  occluder.position.set(
+    stageFootprint.centerX,
+    WALL_HEIGHT + ROOF_THICKNESS / 2 + 0.02,
+    stageFootprint.centerZ
+  );
+  occluder.castShadow = true;
+  occluder.receiveShadow = false;
+  occluder.name = 'stage-roof-shadow-occluder';
+  occluder.userData = {
+    kind: 'roofShadowOccluder',
+    ignoreForWalkability: true,
+  };
+  group.add(occluder);
+}
+
+function addPointLights(group, stageData) {
+  const lights = Array.isArray(stageData.lightSpawns) ? stageData.lightSpawns : [];
+  for (const item of lights) {
+    const pointLight = new THREE.PointLight(
+      new THREE.Color(item.color),
+      Number(item.intensity) || 1.2,
+      Number(item.range) || 7.5,
+      2
+    );
+    pointLight.position.set(item.x, Number(item.height) || 2.35, item.z);
+    pointLight.castShadow = true;
+    pointLight.shadow.mapSize.set(512, 512);
+    pointLight.shadow.bias = -0.0002;
+    pointLight.shadow.normalBias = 0.02;
+    pointLight.name = `stage-light-${item.id ?? 'unnamed'}`;
+    pointLight.userData = {
+      kind: 'stageLight',
+      id: item.id ?? null,
+    };
+    group.add(pointLight);
+  }
+}
+
 export function buildStageGroup(stageData, options = {}) {
   const mode = options.mode ?? 'preview';
   const includeLandscape = options.includeLandscape ?? mode !== 'preview';
   const includeTrees = options.includeTrees ?? (mode !== 'preview' && mode !== 'collision');
   const includeWindowGlass = options.includeWindowGlass ?? true;
   const includeFurniture = options.includeFurniture ?? true;
+  const includePointLights = options.includePointLights ?? mode === 'runtime';
+  const includeShadowOccluder = options.includeShadowOccluder ?? mode === 'runtime';
   const stageFootprint = resolveStageFootprint(stageData);
   const group = new THREE.Group();
   group.name = 'svg-stage';
@@ -571,9 +703,14 @@ export function buildStageGroup(stageData, options = {}) {
     }
   }
   addDoorLintelGeometry(group, stageData.doors, wallMaterial);
+  addWallTopSealGeometry(group, stageData.walls, wallMaterial);
+  addWallCornerSealGeometry(group, stageData.walls, wallMaterial);
 
   if (mode !== 'preview') {
     addRoofGeometry(group, stageData, floorMaterial, stageFootprint);
+    if (includeShadowOccluder) {
+      addRoofShadowOccluderGeometry(group, stageFootprint);
+    }
   }
 
   addWindowBlockingGeometry(group, stageData.windows, wallMaterial);
@@ -582,6 +719,9 @@ export function buildStageGroup(stageData, options = {}) {
   }
   if (includeFurniture) {
     addFurnitureMeshes(group, stageData);
+  }
+  if (includePointLights) {
+    addPointLights(group, stageData);
   }
 
   if (includeLandscape) {

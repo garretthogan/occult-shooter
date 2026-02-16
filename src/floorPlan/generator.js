@@ -8,6 +8,7 @@ const DEFAULT_OPTIONS = {
   height: 24,
   hallwayCount: 1,
   doorCount: 6,
+  maxLightCount: 10,
   roomShapeStyle: 45,
   doorWidth: 1.2,
   windowWidth: 1.6,
@@ -100,6 +101,58 @@ function cellKey(x, y) {
 function parseCellKey(key) {
   const [xRaw, yRaw] = key.split(',');
   return { x: Number(xRaw), y: Number(yRaw) };
+}
+
+function createLightSpawnsFromPlanCells(rooms, hallways, maxLightCount, rng) {
+  const requested = Math.max(0, Math.round(Number(maxLightCount) || 0));
+  if (requested === 0) return [];
+
+  const roomCells = (rooms ?? []).flatMap((room) => room.cells ?? []);
+  const hallwayCells = (hallways ?? []).flatMap((hallway) => hallway.cells ?? []);
+  const uniqueCells = new Map();
+  for (const cell of [...roomCells, ...hallwayCells]) {
+    const x = Number(cell?.x);
+    const y = Number(cell?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    uniqueCells.set(`${x},${y}`, { x, y });
+  }
+  const candidates = [...uniqueCells.values()];
+  if (candidates.length === 0) return [];
+
+  const targetCount = Math.min(requested, candidates.length);
+  const picked = [];
+  const remaining = [...candidates];
+  const firstIndex = randomInt(rng, 0, remaining.length - 1);
+  picked.push(remaining.splice(firstIndex, 1)[0]);
+  while (picked.length < targetCount && remaining.length > 0) {
+    let bestIndex = 0;
+    let bestDistanceSq = -1;
+    for (let index = 0; index < remaining.length; index++) {
+      const candidate = remaining[index];
+      let nearestDistanceSq = Infinity;
+      for (const selected of picked) {
+        const dx = candidate.x - selected.x;
+        const dy = candidate.y - selected.y;
+        const distanceSq = dx * dx + dy * dy;
+        if (distanceSq < nearestDistanceSq) nearestDistanceSq = distanceSq;
+      }
+      if (nearestDistanceSq > bestDistanceSq) {
+        bestDistanceSq = nearestDistanceSq;
+        bestIndex = index;
+      }
+    }
+    picked.push(remaining.splice(bestIndex, 1)[0]);
+  }
+
+  return picked.map((cell, index) => ({
+    id: `light-${index + 1}`,
+    x: cell.x + 0.5,
+    y: cell.y + 0.5,
+    height: 2.35,
+    intensity: 1.2,
+    range: 7.5,
+    color: '#ffe8b8',
+  }));
 }
 
 function stampHallwayCell(hallwayCells, bounds, x, y, brushRadius) {
@@ -1304,6 +1357,7 @@ export function generateFloorPlan(userOptions = {}) {
   options.height = clampNumber(Number(options.height) || DEFAULT_OPTIONS.height, 12, 100);
   options.hallwayCount = Math.round(clampNumber(Number(options.hallwayCount) || 1, 1, 12));
   options.doorCount = Math.round(clampNumber(Number(options.doorCount) || 0, 0, 40));
+  options.maxLightCount = Math.round(clampNumber(Number(options.maxLightCount) || 0, 0, 80));
   options.roomShapeStyle = Math.round(
     clampNumber(
       Number(options.roomShapeStyle) || DEFAULT_OPTIONS.roomShapeStyle,
@@ -1359,6 +1413,13 @@ export function generateFloorPlan(userOptions = {}) {
   const walls = bestAttempt.walls;
   const openingGlyphs = bestAttempt.openings;
   const connectedDoors = bestAttempt.connectedDoors;
+  const lightRng = createRng(Number(options.seed) + 19211);
+  const lightSpawns = createLightSpawnsFromPlanCells(
+    rooms,
+    hallways,
+    options.maxLightCount,
+    lightRng
+  );
   return {
     meta: {
       width: options.width,
@@ -1369,6 +1430,7 @@ export function generateFloorPlan(userOptions = {}) {
       requestedDoorCount: options.doorCount,
       placedDoorCount: connectedDoors.length,
       hasExteriorExit: bestAttempt.hasExteriorExit,
+      lightCount: lightSpawns.length,
       windowCount: openingGlyphs.filter((opening) => opening.type === 'window').length,
       wallCount: walls.length,
     },
@@ -1376,6 +1438,7 @@ export function generateFloorPlan(userOptions = {}) {
     hallways,
     walls,
     openings: openingGlyphs,
+    lightSpawns,
     furniture: [],
   };
 }
@@ -1409,6 +1472,16 @@ function svgNpcStart(item, padding) {
 </g>`.trim();
 }
 
+function svgLightStart(item, padding) {
+  const cx = item.x + padding;
+  const cy = item.y + padding;
+  return `
+<g class="light-start-marker" data-id="${item.id}" data-plan-x="${item.x}" data-plan-y="${item.y}">
+  <circle class="light-start-core" cx="${cx}" cy="${cy}" r="0.2" />
+  <circle class="light-start-ring" cx="${cx}" cy="${cy}" r="0.38" />
+</g>`.trim();
+}
+
 export function renderFloorPlanSvg(plan, options = {}) {
   const padding = options.padding ?? 1.5;
   const width = plan.meta.width + padding * 2;
@@ -1417,6 +1490,7 @@ export function renderFloorPlanSvg(plan, options = {}) {
   const labelRooms = options.labelRooms ?? true;
   const playerStart = options.playerStart ?? { x: plan.meta.width / 2, y: plan.meta.height / 2 };
   const npcSpawns = Array.isArray(options.npcSpawns) ? options.npcSpawns : [];
+  const lightSpawns = Array.isArray(options.lightSpawns) ? options.lightSpawns : (plan.lightSpawns ?? []);
 
   const hallwayFill = (plan.hallways ?? [])
     .flatMap((hallway) => hallway.cells ?? [])
@@ -1453,6 +1527,15 @@ export function renderFloorPlanSvg(plan, options = {}) {
       x: Number(item.x),
       y: Number(item.y),
     })),
+    lightSpawns: lightSpawns.map((item, index) => ({
+      id: item.id ?? `light-${index + 1}`,
+      x: Number(item.x),
+      y: Number(item.y),
+      height: Number(item.height) || 2.35,
+      intensity: Number(item.intensity) || 1.2,
+      range: Number(item.range) || 7.5,
+      color: typeof item.color === 'string' && item.color.length > 0 ? item.color : '#ffe8b8',
+    })),
     rooms: (plan.rooms ?? []).map((room) => ({
       id: room.id,
       cells: Array.isArray(room.cells)
@@ -1465,6 +1548,11 @@ export function renderFloorPlanSvg(plan, options = {}) {
   const playerStartSvg = svgPlayerStart(playerStart, padding);
   const npcStartSvg = npcSpawns.map((item, index) => svgNpcStart({
     id: item.id ?? `npc-${index + 1}`,
+    x: Number(item.x),
+    y: Number(item.y),
+  }, padding)).join('');
+  const lightStartSvg = lightSpawns.map((item, index) => svgLightStart({
+    id: item.id ?? `light-${index + 1}`,
     x: Number(item.x),
     y: Number(item.y),
   }, padding)).join('');
@@ -1486,6 +1574,9 @@ export function renderFloorPlanSvg(plan, options = {}) {
     .npc-start-head { fill: #a6d9ff; stroke: #2a6d99; stroke-width: 0.08; }
     .npc-start-marker.is-selected .npc-start-body { fill: #ffd76e; stroke: #fff7d1; stroke-width: 0.14; }
     .npc-start-marker.is-selected .npc-start-head { fill: #ffe7a7; stroke: #fff7d1; stroke-width: 0.14; }
+    .light-start-marker { cursor: grab; }
+    .light-start-core { fill: #ffe8b8; stroke: #8d6f35; stroke-width: 0.08; }
+    .light-start-ring { fill: none; stroke: #ffd56b; stroke-width: 0.08; opacity: 0.9; }
     .hallway-label {
       fill: #6ea7df;
       font: 0.75px system-ui, sans-serif;
@@ -1507,6 +1598,7 @@ export function renderFloorPlanSvg(plan, options = {}) {
   ${openingLines}
   ${playerStartSvg}
   ${npcStartSvg}
+  ${lightStartSvg}
   ${hallwayLabels}
   ${roomLabels}
 </svg>`.trim();

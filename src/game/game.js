@@ -14,8 +14,6 @@ import { createHitscan } from './hitscan.js';
 import { createNpc, updateNpc, alertNpc } from './npc.js';
 import { buildWalkabilityGrid, getFloorAt } from './pathfinding.js';
 import { createPathfindingDebug } from './pathfindingDebug.js';
-import { createSceneControlPanel } from './sceneControlPanel.js';
-import { loadLightingConfigFromUrl, applyLightingConfig } from './lightingConfig.js';
 import { PHYSICS, PLAYER, NPC, GAMEPAD } from './config.js';
 import { withBasePath } from '../shared/basePath.js';
 
@@ -409,13 +407,9 @@ export async function createGame(containerElement, options = {}) {
   const showSceneGui = options.showSceneGui ?? import.meta.env.DEV;
   const escapePausesGame = options.escapePausesGame !== false;
   let npcStarts = Array.isArray(options.npcStarts) ? options.npcStarts : [];
+  let lightSpawns = Array.isArray(options.lightSpawns) ? options.lightSpawns : [];
   let playerStart = options.playerStart ?? null;
-  const { scene, fillLight, directionalLight } = createScene();
-
-  const lightingConfig = await loadLightingConfigFromUrl();
-  if (lightingConfig !== null) {
-    applyLightingConfig({ fillLight, directionalLight }, lightingConfig);
-  }
+  const { scene } = createScene();
 
   const camera = new THREE.PerspectiveCamera(
     70,
@@ -450,6 +444,9 @@ export async function createGame(containerElement, options = {}) {
       if (npcStarts.length === 0 && Array.isArray(world.npcStarts) && world.npcStarts.length > 0) {
         npcStarts = world.npcStarts;
       }
+      if (lightSpawns.length === 0 && Array.isArray(world.lightSpawns) && world.lightSpawns.length > 0) {
+        lightSpawns = world.lightSpawns;
+      }
     } catch (err) {
       console.warn(`Failed to load ${worldUrl}, using procedural level:`, err);
       const procedural = createProceduralWorld();
@@ -459,7 +456,28 @@ export async function createGame(containerElement, options = {}) {
   }
 
   scene.add(worldGroup);
-
+  if ((typeof svgFloorPlanText !== 'string' || svgFloorPlanText.length === 0) && lightSpawns.length > 0) {
+    for (const light of lightSpawns) {
+      const x = Number(light?.x);
+      const z = Number(light?.z);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+      const pointLight = new THREE.PointLight(
+        new THREE.Color(
+          typeof light?.color === 'string' && light.color.length > 0 ? light.color : '#ffe8b8'
+        ),
+        Number(light?.intensity) || 1.2,
+        Number(light?.range) || 7.5,
+        2
+      );
+      pointLight.position.set(x, Number(light?.height) || 2.35, z);
+      pointLight.castShadow = true;
+      pointLight.shadow.mapSize.set(512, 512);
+      pointLight.shadow.bias = -0.0002;
+      pointLight.shadow.normalBias = 0.02;
+      pointLight.name = 'runtime-stage-light';
+      scene.add(pointLight);
+    }
+  }
   const gridData = buildWalkabilityGrid(worldGroup);
 
   const spawnX = playerStart?.x ?? 0;
@@ -534,13 +552,7 @@ export async function createGame(containerElement, options = {}) {
   const debugState = { showPathfinding: false };
   pathfindingDebug.setVisible(debugState.showPathfinding);
 
-  if (showSceneGui) {
-    createSceneControlPanel(
-      { fillLight, directionalLight },
-      containerElement,
-      { pathfindingDebug, debugState }
-    );
-  }
+  // Global scene lights are disabled by design; only authored stage point lights illuminate gameplay.
 
   const reticle = document.createElement('div');
   reticle.className = 'reticle';
