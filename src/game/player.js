@@ -58,24 +58,20 @@ function resetPlayer(player, camera) {
 }
 
 export function applyPlayerControls(player, camera, input, deltaTime) {
-  const speedDelta = deltaTime * (player.onFloor ? PLAYER.GROUND_ACCEL : PLAYER.AIR_ACCEL);
+  const sprintMultiplier = player.onFloor && input.isSprintPressed() ? PLAYER.SPRINT_MULTIPLIER : 1;
+  const speedDelta = deltaTime * (player.onFloor ? PLAYER.GROUND_ACCEL : PLAYER.AIR_ACCEL) * sprintMultiplier;
+  const moveInput = input.getMoveInput();
 
   getForwardVector(camera, FORWARD);
   getSideVector(camera, SIDE);
 
-  if (input.isKeyDown('KeyW')) {
-    player.velocity.add(FORWARD.clone().multiplyScalar(speedDelta));
+  if (moveInput.y !== 0) {
+    player.velocity.add(FORWARD.clone().multiplyScalar(speedDelta * moveInput.y));
   }
-  if (input.isKeyDown('KeyS')) {
-    player.velocity.add(FORWARD.clone().multiplyScalar(-speedDelta));
+  if (moveInput.x !== 0) {
+    player.velocity.add(SIDE.clone().multiplyScalar(speedDelta * moveInput.x));
   }
-  if (input.isKeyDown('KeyA')) {
-    player.velocity.add(SIDE.clone().multiplyScalar(-speedDelta));
-  }
-  if (input.isKeyDown('KeyD')) {
-    player.velocity.add(SIDE.clone().multiplyScalar(speedDelta));
-  }
-  if (player.onFloor && input.isKeyDown('Space')) {
+  if (player.onFloor && input.isJumpPressed()) {
     player.velocity.y = PLAYER.JUMP_VELOCITY;
   }
 }

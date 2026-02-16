@@ -22,6 +22,8 @@ export const PLAYER = {
   DAMPING_FACTOR: 4,
   /** Air resistance multiplier when not on floor. */
   AIR_RESISTANCE: 0.1,
+  /** Sprint acceleration multiplier while grounded. */
+  SPRINT_MULTIPLIER: 1.45,
 };
 
 export const HITSCAN = {
@@ -91,4 +93,19 @@ export const PATHFINDING = {
   MAX_STEP_UP: 0.6,
   /** Max step down height (meters) to avoid drop-off paths. */
   MAX_STEP_DOWN: 0.75,
+};
+
+export const GAMEPAD = {
+  /** Inner deadzone for left stick movement axes. */
+  MOVE_DEADZONE: 0.18,
+  /** Inner deadzone for right stick look axes. */
+  LOOK_DEADZONE: 0.14,
+  /** Axis response exponent for smoother low-speed movement. */
+  MOVE_RESPONSE_EXPONENT: 1.25,
+  /** Axis response exponent for predictable camera look curve. */
+  LOOK_RESPONSE_EXPONENT: 1.35,
+  /** Camera look speed in radians per second at full stick deflection. */
+  LOOK_SPEED_RADIANS_PER_SECOND: 2.65,
+  /** Trigger/button threshold treated as a pressed state. */
+  BUTTON_THRESHOLD: 0.45,
 };

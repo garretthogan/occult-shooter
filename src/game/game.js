@@ -16,7 +16,7 @@ import { buildWalkabilityGrid, getFloorAt } from './pathfinding.js';
 import { createPathfindingDebug } from './pathfindingDebug.js';
 import { createSceneControlPanel } from './sceneControlPanel.js';
 import { loadLightingConfigFromUrl, applyLightingConfig } from './lightingConfig.js';
-import { PHYSICS, PLAYER, NPC } from './config.js';
+import { PHYSICS, PLAYER, NPC, GAMEPAD } from './config.js';
 import { withBasePath } from '../shared/basePath.js';
 
 const STEPS_PER_FRAME = PHYSICS.STEPS_PER_FRAME;
@@ -43,6 +43,7 @@ const PLAYER_HIT_FLASH_MAX_OPACITY = 0.5;
 const PLAYER_HIT_FLASH_DECAY = 2.8;
 const GAME_OVER_CAMERA_HEIGHT = 24;
 const GAME_OVER_CAMERA_DISTANCE = 8;
+const MAX_LOOK_PITCH = Math.PI / 2 - 0.04;
 
 const DEFAULT_WORLD_GLB_URL = withBasePath('/collision-world.glb');
 
@@ -205,6 +206,10 @@ function supportsEscapeKeyboardLock() {
     typeof navigator.keyboard.lock === 'function' &&
     typeof navigator.keyboard.unlock === 'function'
   );
+}
+
+function clampCameraPitch(camera) {
+  camera.rotation.x = Math.max(-MAX_LOOK_PITCH, Math.min(MAX_LOOK_PITCH, camera.rotation.x));
 }
 
 function randomRange(min, max) {
@@ -702,6 +707,7 @@ export async function createGame(containerElement, options = {}) {
     if (document.pointerLockElement !== null) {
       camera.rotation.y -= event.movementX / 500;
       camera.rotation.x -= event.movementY / 500;
+      clampCameraPitch(camera);
     }
   });
 
@@ -737,6 +743,21 @@ export async function createGame(containerElement, options = {}) {
 
   function animate() {
     const rawDelta = Math.min(MAX_DELTA, clock.getDelta());
+    input.updateGamepadState();
+    if (!isGameOver && escapePausesGame && input.consumePausePressed()) {
+      setPaused(!isPaused);
+    }
+    if (!isGameOver && !isPaused) {
+      const lookInput = input.getLookInput();
+      if (lookInput.x !== 0 || lookInput.y !== 0) {
+        camera.rotation.y -= lookInput.x * GAMEPAD.LOOK_SPEED_RADIANS_PER_SECOND * rawDelta;
+        camera.rotation.x -= lookInput.y * GAMEPAD.LOOK_SPEED_RADIANS_PER_SECOND * rawDelta;
+        clampCameraPitch(camera);
+      }
+      if (input.consumeFirePressed()) {
+        hitscan.fire(camera);
+      }
+    }
     const deltaPerStep = rawDelta / STEPS_PER_FRAME;
 
     for (let i = 0; i < STEPS_PER_FRAME; i++) {

@@ -23,6 +23,36 @@ function resolveBasePath() {
   return `/${repositoryName}/`;
 }
 
+function showCombinedDevUrls() {
+  return {
+    name: 'combined-dev-urls',
+    configureServer(server) {
+      if (server.httpServer == null) return;
+      server.httpServer.once('listening', () => {
+        let attempts = 0;
+        const maxAttempts = 20;
+        const poll = () => {
+          attempts += 1;
+          const localUrl = server.resolvedUrls?.local?.[0] ?? null;
+          const lanUrl = server.resolvedUrls?.network?.[0] ?? null;
+          if (localUrl != null && lanUrl != null) {
+            server.config.logger.info(`  ➜  Open:    ${localUrl}  |  LAN: ${lanUrl}`);
+            return;
+          }
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 50);
+          }
+        };
+        poll();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   base: resolveBasePath(),
+  server: {
+    host: true,
+  },
+  plugins: [showCombinedDevUrls()],
 });
